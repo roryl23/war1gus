@@ -40,3 +40,8 @@ macOS: ![Build Status](https://github.com/Wargus/war1gus/actions/workflows/macos
 
 ### Gallery
 <img width="800" src="https://user-images.githubusercontent.com/93911529/157967177-0eab04af-a704-415d-8f6f-294d0e5aaed0.png">
+
+
+### War1gus AI
+
+
