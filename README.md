@@ -44,4 +44,26 @@ macOS: ![Build Status](https://github.com/Wargus/war1gus/actions/workflows/macos
 
 ### War1gus AI
 
+This fork adds a self-training transformer model as an AI opponent.
 
+#### Usage
+
+This build has only been tested on Ubuntu 22.04.
+Using another platform is left as an exercise for the reader,
+but this will probably only work on Linux because the file
+`/tmp/War1gusAI.out` is directly referenced in the code.
+
+You'll need to follow the instructions above with War1gus first,
+in order to generate all the files that the usage steps below
+expect to run correctly.
+
+* Install dependencies:
+  * Stratagus build dependencies:
+    * `brew install sdl2 sdl2_image sdl2_mixer sdl2_net libogg libvorbis`
+    * `sudo apt-get install tolua++`
+  * Julia Programming Language
+    * Install juliaup: `curl -fsSL https://install.julialang.org | sh`
+    * Install Julia 1.11.4 and instantiate project: `juliaup add 1.11.4 && juliaup override set 1.11.4 && julia --project -e 'using Pkg; Pkg.activate("."); Pkg.instantiate(); Pkg.update();'`
+  * War1gus build dependencies:
+    * [localexec](https://github.com/eriksank/localexec): `luarocks install localexec`
+* Build, install, and run: `bash build.sh && ./build/war1gus`
