@@ -473,6 +473,37 @@ end
 --  Some functions used by Ai
 --
 
+function AiEngineInterface(binaryPath)
+   local writePipe, writeErr = io.popen(binaryPath, "w")
+   if not writePipe then
+      print("Failed to execute engine binary: " .. writeErr)
+      return nil
+   end
+   writePipe:setvbuf("line")
+   -- Engine state variables
+   local thinking = false
+   return {
+      writePipe = writePipe,
+      thinking = thinking,
+      send = function(self, input)
+         self.writePipe:write(input .. "\n")
+         self.writePipe:flush()
+      end,
+      receive = function(self)
+         -- TODO: here we should generate an os-aware file path to pass to War1gusAI
+         local readPipe, readErr = io.open("/tmp/War1gusAI.out", "r")
+         if not readPipe then
+            print("Failed to read engine output file: " .. readErr)
+            return nil
+         end
+         return readPipe:read()
+      end,
+      close = function(self)
+         self.writePipe:close()
+      end
+   }
+end
+
 -- Create some counters used by ai
 local function CreateAiGameData()
    if stratagus == nil then
@@ -486,11 +517,25 @@ local function CreateAiGameData()
       stratagus.gameData.AIState.index = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
       stratagus.gameData.AIState.loop_index = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
    end
+   if stratagus.gameData.AIEngine == nil then
+      local success, err = os.remove("/tmp/War1gusAI.out")
+      if not success then
+         print("Failed to delete War1gusAI output file: " .. (err or "Unknown error"))
+      end
+      stratagus.gameData.AIEngine = AiEngineInterface("scripts/ai/war1gus/build/bin/War1gusAI")
+      if not stratagus.gameData.AIEngine then
+         print("Failed to open AI engine!")
+     end
+   end
 end
 
 local function CleanAiGameData()
    if stratagus ~= nil and stratagus.gameData ~= nil then
       stratagus.gameData.AIState = nil
+      if stratagus.gameData.AIEngine ~= nil then
+         stratagus.gameData.AIEngine:close()
+         stratagus.gameData.AIEngine = nil
+      end
    end
 end
 

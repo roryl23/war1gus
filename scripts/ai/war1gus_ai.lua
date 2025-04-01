@@ -9,12 +9,10 @@ function GetAllUnitPositions(player)
     return positions
 end
 
--- Function to get all other active players (excluding the current AI player)
 function GetOtherPlayers()
     local me = AiPlayer()
     local otherPlayers = {}
     local maxPlayers = 16
-
     for i = 0, maxPlayers - 1 do
         if i ~= me then
             table.insert(otherPlayers, i)
@@ -25,30 +23,47 @@ end
 
 function War1gusAI()
     local debug = true
-    local otherPlayers = GetOtherPlayers()
-    for playerId, player in ipairs(otherPlayers) do
-        if player ~= nil then
-            local unitPositions = GetAllUnitPositions(player)
-            for unitId, position in pairs(unitPositions) do
-                if debug then
-                    print("Unit " .. unitId .. " is at (" .. position.x .. ", " .. position.y .. ")")
+    if stratagus.gameData.AIEngine.thinking == false then
+        -- Generate current game state
+        local otherPlayers = GetOtherPlayers()
+        for playerId, player in ipairs(otherPlayers) do
+            if player == nil then
+                print("Player is nil!")
+            else
+                local unitPositions = GetAllUnitPositions(player)
+                for unitId, position in pairs(unitPositions) do
+                    if debug then
+                        print("Unit " .. unitId .. " is at (" .. position.x .. ", " .. position.y .. ")")
+                    end
                 end
             end
         end
+        -- Send current game state to engine
+        stratagus.gameData.AIEngine:send("position test")
+        stratagus.gameData.AIEngine.thinking = true
+    else
+        local response = stratagus.gameData.AIEngine.receive()
+        if response == nil then
+            if debug then
+                print("no output from AI engine yet...")
+            end
+        else
+            if debug then
+                print("AI engine response: " .. response)
+            end
+            local aiFunc, err = loadstring(response)
+            if aiFunc then
+                return function()
+                    AiLoop(aiFunc, stratagus.gameData.AIState.loop_index)
+                end
+            else
+                print("Error loading AI generated Lua code: " .. err)
+            end
+        end
     end
---   -- Generate the dynamic instructions
---   local dynamicCode = GetModelOutput()
-
---   -- Load and execute the model output
---   local aiFunction, errorMsg = load(dynamicCode)
---   if aiFunction then
---       local success, execError = pcall(aiFunction)
---       if not success then
---           print("Error executing dynamic AI code: " .. execError)
---       end
---   else
---       print("Error loading dynamic AI code: " .. errorMsg)
---   end
+    return function()
+        AiLoop({function() return true end}, stratagus.gameData.AIState.index)
+    end
 end
 
 DefineAi("war1gus-ai", "*", "war1gus-ai", War1gusAI)
