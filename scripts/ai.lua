@@ -518,6 +518,7 @@ local function CreateAiGameData()
       stratagus.gameData.AIState.loop_index = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
    end
    if stratagus.gameData.AIEngine == nil then
+      -- TODO: here we should generate an os-aware file path to pass to War1gusAI
       local success, err = os.remove("/tmp/War1gusAI.out")
       if not success then
          print("Failed to delete War1gusAI output file: " .. (err or "Unknown error"))
