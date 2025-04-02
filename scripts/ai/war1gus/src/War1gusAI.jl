@@ -3,6 +3,8 @@ module War1gusAI
 using Base.Threads
 using Format
 
+include("model.jl")
+
 # TODO: this function should receive a filename from War1gus and write there
 function write_to_outfile(content::String)
   open("/tmp/War1gusAI.out", "w") do file
@@ -41,7 +43,7 @@ function evaluator(
   return
 end
 
-function process_position(
+function process_gamestate(
   tokens::Vector{SubString{String}},
   op::Dict,  # options
   o::Channel{String},  # output channel
@@ -83,8 +85,8 @@ function process_command(
   end
   cmd_type = tokens[1]
 
-  if ==("position", cmd_type)
-    return tokens, process_position(tokens, op, o)
+  if ==("gamestate", cmd_type)
+    return tokens, process_gamestate(tokens, op, o)
   elseif ==("setoption", cmd_type)
     return tokens, process_setoption(tokens, op)
   elseif ==("stop", cmd_type)
@@ -98,7 +100,6 @@ end
 
 function real_main()
   # initializations
-  write_to_outfile("function pwnEnemies() return AiSleep(10000) end")
   stdin_channel = Channel{String}(1)
   output_channel = Channel{String}(Inf)
   engine_task = Task(())
@@ -118,7 +119,7 @@ function real_main()
         output_channel,
       )
       if <(0, length(command))
-        if ==(command[1], "position") && ==(Task, typeof(result))
+        if ==(command[1], "gamestate") && ==(Task, typeof(result))
           engine_task = result
         elseif ==(command[1], "setoption") && ==(Dict, typeof(result))
           options = result
