@@ -48,6 +48,7 @@ function War1gusAI()
                 print("no output from AI engine yet...")
             end
         else
+            stratagus.gameData.AIEngine.thinking = false
             if debug then
                 print("AI engine response: " .. response)
             end
