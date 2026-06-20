@@ -29,21 +29,21 @@ jobs:
         include:
             - runner: macos-latest
               suffix: arm64
-            - runner: macos-13
+            - runner: macos-15-intel
               suffix: x86
               
     runs-on: ${{ matrix.runner}}
 
     steps:
     - name: Checkout War1gus
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         repository: Wargus/war1gus
         submodules: recursive
         path: war1gus
     
     - name: Checkout Stratagus
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with: 
         repository: Wargus/stratagus
         submodules: recursive
@@ -87,10 +87,21 @@ jobs:
         codesign --force --deep --sign - war1gus/mac/War1gus.app
         
     - name: Create dmg
-      run: hdiutil create -volname "War1gus" -srcfolder "war1gus/mac/War1gus.app" "War1gus-${{ matrix.suffix }}"
+      run: |
+        output="War1gus-${{ matrix.suffix }}"
+        rm -f "$output" "$output.dmg"
+        for attempt in 1 2 3; do
+          hdiutil detach "/Volumes/War1gus" -force || true
+          if hdiutil create -volname "War1gus" -srcfolder "war1gus/mac/War1gus.app" "$output"; then
+            exit 0
+          fi
+          rm -f "$output" "$output.dmg"
+          sleep $((attempt * 10))
+        done
+        hdiutil create -volname "War1gus" -srcfolder "war1gus/mac/War1gus.app" "$output"
     
     - name: Upload artifacts - macOS ${{ matrix.suffix }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: War1gus-macOS-${{ matrix.suffix }}
         path: War1gus-${{ matrix.suffix }}.dmg
