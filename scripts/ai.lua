@@ -508,6 +508,7 @@ local function CreateAiGameData()
       stratagus.gameData.AIState.index = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
       stratagus.gameData.AIState.loop_index = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
       stratagus.gameData.AIState.war1gusRoadsGenerated = {}
+      stratagus.gameData.AIState.lastWar1gusAiCommand = {}
    end
 end
 

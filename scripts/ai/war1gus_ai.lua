@@ -287,7 +287,11 @@ function War1gusAI()
       execute = EconomyAction
       command = "economy (fallback for " .. tostring(action) .. ")"
    end
-   print("war1gus-ai player " .. playerIndex .. ": " .. command)
+   local lastCommand = stratagus.gameData.AIState.lastWar1gusAiCommand[playerIndex]
+   if command ~= lastCommand then
+      print("war1gus-ai player " .. playerIndex .. ": " .. command)
+      stratagus.gameData.AIState.lastWar1gusAiCommand[playerIndex] = command
+   end
    execute(state)
 end
 
