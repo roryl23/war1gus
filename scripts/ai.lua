@@ -75,6 +75,17 @@ function AiWorker()
 end
 
 --
+--  Farm of the current race.
+--
+function AiFarm()
+   if (AiGetRace() == race1) then
+      return "unit-human-farm"
+   else
+      return "unit-orc-farm"
+   end
+end
+
+--
 --  Lumber mill of the current race.
 --
 function AiLumberMill()
@@ -88,12 +99,12 @@ end
 --
 --  Tower of the current race.
 --
-function AiTower() 
-  if (race == race1) then
-    return "unit-human-guard-tower"
-  else
-    return "unit-orc-watch-tower"
-  end
+function AiTower()
+   if (AiGetRace() == race1) then
+      return "unit-human-guard-tower"
+   else
+      return "unit-orc-watch-tower"
+   end
 end
 
 
@@ -473,43 +484,18 @@ end
 --  Some functions used by Ai
 --
 
-function AiEngineInterface(binaryPath)
-   local writePipe, writeErr = io.popen(binaryPath, "w")
-   if not writePipe then
-      print("Failed to execute engine binary: " .. writeErr)
-      return nil
+local WAR1GUS_AI_RELATIVE_BINARY = "scripts/ai/war1gus/build/bin/War1gusAI"
+local WAR1GUS_AI_HOST = "127.0.0.1"
+local WAR1GUS_AI_PORT = 48721
+local WAR1GUS_AI_STATE_DIMENSION = 18
+local WAR1GUS_AI_ACTION_DIMENSION = 10
+local function War1gusAiBinary()
+   local libraryBinary = LibraryPath() .. "/" .. WAR1GUS_AI_RELATIVE_BINARY
+   if CanAccessFile(libraryBinary) then
+      return libraryBinary
    end
-   writePipe:setvbuf("line")
-   -- Engine state variables
-   local thinking = false
-   return {
-      writePipe = writePipe,
-      thinking = thinking,
-      send = function(self, input)
-         self.writePipe:write(input .. "\n")
-         self.writePipe:flush()
-      end,
-      receive = function(self)
-         -- TODO: here we should generate an os-aware file path to pass to War1gusAI
-         local readPipe = io.open("/tmp/War1gusAI.out", "r")
-         if not readPipe then
-            return nil
-         end
-         local response = readPipe:read("*a")
-         readPipe:close()
-         local success, removeErr = os.remove("/tmp/War1gusAI.out")
-         if not success then
-            error("Failed to consume War1gusAI output file: " .. (removeErr or "Unknown error"))
-         end
-         return response
-      end,
-      close = function(self)
-         self.writePipe:close()
-      end
-   }
+   return WAR1GUS_AI_RELATIVE_BINARY
 end
-
--- Create some counters used by ai
 local function CreateAiGameData()
    if stratagus == nil then
       stratagus = {}
@@ -521,34 +507,81 @@ local function CreateAiGameData()
       stratagus.gameData.AIState = {}
       stratagus.gameData.AIState.index = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
       stratagus.gameData.AIState.loop_index = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
+      stratagus.gameData.AIState.war1gusRoadsGenerated = {}
    end
 end
 
-function StartWar1gusAiEngine()
+
+
+local function CloseWar1gusAiServer()
+   if stratagus == nil or stratagus.gameData == nil then
+      return
+   end
+
+   local server = stratagus.gameData.War1gusAiServer
+   if server == nil then
+      return
+   end
+
+   for playerIndex, handle in pairs(server.handles) do
+      pcall(AiProcessorEnd, handle, 0, server.states[playerIndex])
+   end
+   server.handles = {}
+   server.states = {}
+   server.process:close()
+   stratagus.gameData.War1gusAiServer = nil
+end
+
+function StartWar1gusAiServer()
    CreateAiGameData()
-   if stratagus.gameData.AIEngine == nil then
-      -- TODO: here we should generate an os-aware file path to pass to War1gusAI
-      if CanAccessFile("/tmp/War1gusAI.out") then
-         local success, err = os.remove("/tmp/War1gusAI.out")
-         if not success then
-            print("Failed to delete War1gusAI output file: " .. (err or "Unknown error"))
-         end
+   local server = stratagus.gameData.War1gusAiServer
+   if server == nil then
+      local command = string.format(
+         "%q --host %s --port %d",
+         War1gusAiBinary(),
+         WAR1GUS_AI_HOST,
+         WAR1GUS_AI_PORT
+      )
+      local process = io.popen(command, "w")
+      if process == nil then
+         return nil
       end
-      stratagus.gameData.AIEngine = AiEngineInterface("scripts/ai/war1gus/build/bin/War1gusAI")
-      if not stratagus.gameData.AIEngine then
-         error("Failed to open AI engine!")
+      server = {
+         process = process,
+         handles = {},
+         states = {}
+      }
+      stratagus.gameData.War1gusAiServer = server
+   end
+   return server
+end
+
+function GetWar1gusAiProcessor(playerIndex, state)
+   local server = StartWar1gusAiServer()
+   if server == nil then
+      return nil
+   end
+
+   server.states[playerIndex] = state
+   local handle = server.handles[playerIndex]
+   if handle == nil then
+      handle = AiProcessorSetup(
+         WAR1GUS_AI_HOST,
+         WAR1GUS_AI_PORT,
+         WAR1GUS_AI_STATE_DIMENSION,
+         WAR1GUS_AI_ACTION_DIMENSION
+      )
+      if handle ~= nil then
+         server.handles[playerIndex] = handle
       end
    end
-   return stratagus.gameData.AIEngine
+   return handle
 end
 
 local function CleanAiGameData()
    if stratagus ~= nil and stratagus.gameData ~= nil then
+      CloseWar1gusAiServer()
       stratagus.gameData.AIState = nil
-      if stratagus.gameData.AIEngine ~= nil then
-         stratagus.gameData.AIEngine:close()
-         stratagus.gameData.AIEngine = nil
-      end
    end
 end
 

@@ -1,0 +1,6 @@
+-- Stratagus Map Presentation
+-- Based on GoldRush(4) and resized proportionally.
+-- File licensed under the GNU GPL version 2.
+
+DefinePlayerTypes("person", "computer", "computer", "computer")
+PresentMap("Gold Rush AI - Maximum", 4, 196, 196, 1)

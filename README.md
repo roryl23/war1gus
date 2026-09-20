@@ -44,26 +44,35 @@ macOS: ![Build Status](https://github.com/Wargus/war1gus/actions/workflows/macos
 
 ### War1gus AI
 
-This fork adds a self-training transformer model as an AI opponent.
+This fork adds an experimental Julia/Flux transformer policy as an AI
+opponent. The policy receives player-visible economy, infrastructure, and army
+state from Stratagus and selects one of ten validated Lua strategy actions.
+Deterministic progression constraints keep the untrained model's choices legal
+and useful; this is not a self-training system.
 
 #### Usage
 
-This build has only been tested on Ubuntu 22.04.
-Using another platform is left as an exercise for the reader,
-but this will probably only work on Linux because the file
-`/tmp/War1gusAI.out` is directly referenced in the code.
+The integration is currently Linux-focused. It launches the compiled Julia
+application as a child process and uses Stratagus' `AiProcessor*` TCP API on
+localhost. It does not exchange commands through temporary files or execute
+model-generated Lua.
 
-You'll need to follow the instructions above with War1gus first,
-in order to generate all the files that the usage steps below
-expect to run correctly.
+First build and extract War1gus as described above. Install Julia 1.12 with
+`juliaup`, then build the AI application:
 
-* Install dependencies:
-  * Stratagus build dependencies:
-    * `brew install sdl2 sdl2_image sdl2_mixer sdl2_net libogg libvorbis`
-    * `sudo apt-get install tolua++`
-  * Julia Programming Language
-    * Install juliaup: `curl -fsSL https://install.julialang.org | sh`
-    * Install Julia 1.11.4 and instantiate project: `juliaup add 1.11.4 && juliaup override set 1.11.4 && julia --project -e 'using Pkg; Pkg.activate("."); Pkg.instantiate(); Pkg.update();'`
-  * War1gus build dependencies:
-    * [localexec](https://github.com/eriksank/localexec): `luarocks install localexec`
-* Build, install, and run: `bash build.sh && ./build/war1gus`
+```sh
+cd scripts/ai/war1gus
+julia --project -e 'using Pkg; Pkg.instantiate()'
+bash build.sh
+```
+
+Build and run War1gus from the repository root:
+
+```sh
+bash build.sh War1gus
+./build/war1gus
+```
+
+Select `war1gus-ai` for a computer player. The Lua integration starts
+`scripts/ai/war1gus/build/bin/War1gusAI` on demand and closes it when the game
+ends.
