@@ -20,9 +20,9 @@ if [ -z "$stage" ]; then
   mkdir -p build && cd build && \
   cmake .. \
     -DCMAKE_BUILD_TYPE=Debug \
-    -DBUILD_VENDORED_LUA=OFF \
-    -DBUILD_VENDORED_SDL=OFF \
-    -DBUILD_VENDORED_MEDIA_LIBS=OFF \
+    -DBUILD_VENDORED_LUA=ON \
+    -DBUILD_VENDORED_SDL=ON \
+    -DBUILD_VENDORED_MEDIA_LIBS=ON \
     -DBUILD_TESTING=1 \
     -DENABLE_DEV=ON && \
   cmake --build . --config Debug && \
@@ -45,9 +45,9 @@ elif [ "$stage" = "Stratagus" ]; then
   git submodule update && \
   mkdir -p build && cd build && \
   cmake .. \
-    -DBUILD_VENDORED_LUA=OFF \
-    -DBUILD_VENDORED_SDL=OFF \
-    -DBUILD_VENDORED_MEDIA_LIBS=OFF \
+    -DBUILD_VENDORED_LUA=ON \
+    -DBUILD_VENDORED_SDL=ON \
+    -DBUILD_VENDORED_MEDIA_LIBS=ON \
     -DBUILD_TESTING=1 \
     -DENABLE_DEV=ON \
     -DEAGER_LOAD=ON && \
