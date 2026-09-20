@@ -36,23 +36,22 @@
 #define EXTRACTOR_ARGS {"-v", NULL}
 #define EXTRACTION_FILES "war1data"
 #define CHECK_EXTRACTED_VERSION 1
-#define __war1gus_contrib__ "campaigns", "campaigns", \
-			    "contrib", "contrib", \
-			    "maps", "maps", \
-			    "shaders", "shaders", \
-			    "scripts", "scripts", \
-                           ":optional:", \
-                           "music/TimGM6mb.sf2", "music/TimGM6mb.sf2"
+#define __war1gus_contrib__                                                    \
+  "campaigns", "campaigns", "contrib", "contrib", "maps", "maps", "shaders",   \
+      "shaders", "scripts", "scripts", ":optional:", "music/TimGM6mb.sf2",     \
+      "music/TimGM6mb.sf2"
 
 #ifdef WIN32
-#define CONTRIB_DIRECTORIES { __war1gus_contrib__, NULL }
+#define CONTRIB_DIRECTORIES {__war1gus_contrib__, NULL}
 #else
 // for convenience during development, we also try to copy the system
 // soundfont to the data directory on linux
-#define CONTRIB_DIRECTORIES { __war1gus_contrib__, "/usr/share/sounds/sf2/TimGM6mb.sf2", "music/TimGM6mb.sf2", NULL }
+#define CONTRIB_DIRECTORIES                                                    \
+  {__war1gus_contrib__, "/usr/share/sounds/sf2/TimGM6mb.sf2",                  \
+   "music/TimGM6mb.sf2", NULL}
 #endif
 
-const char* SRC_PATH() { return __FILE__; }
+const char *SRC_PATH() { return __FILE__; }
 
 #ifdef WIN32
 #define TITLE_PNG "%s\\graphics\\ui\\title_screen.png"
@@ -61,5 +60,46 @@ const char* SRC_PATH() { return __FILE__; }
 #endif
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+static void SetWar1gusAiMode(const char *mode) {
+#if defined(_WIN32) || defined(_WIN64)
+  const int result = _putenv_s("WAR1GUS_AI_MODE", mode == nullptr ? "" : mode);
+#else
+  const int result = mode == nullptr ? unsetenv("WAR1GUS_AI_MODE")
+                                     : setenv("WAR1GUS_AI_MODE", mode, 1);
+#endif
+  if (result != 0) {
+    fprintf(stderr, "Unable to set WAR1GUS_AI_MODE\n");
+    exit(EXIT_FAILURE);
+  }
+}
+
+static void War1gusLauncherPreArguments(int &argc, char *argv[]) {
+  bool train = false;
+  bool resetTrain = false;
+  int writeIndex = 1;
+
+  for (int readIndex = 1; readIndex < argc; ++readIndex) {
+    if (!strcmp(argv[readIndex], "--train")) {
+      train = true;
+    } else if (!strcmp(argv[readIndex], "--reset-train")) {
+      resetTrain = true;
+    } else {
+      argv[writeIndex++] = argv[readIndex];
+    }
+  }
+  argc = writeIndex;
+  argv[argc] = nullptr;
+
+  SetWar1gusAiMode(resetTrain ? "reset-train" : train ? "train" : nullptr);
+}
+
+#define GAME_LAUNCHER_PRE_ARGUMENT_HOOK(argc, argv)                            \
+  War1gusLauncherPreArguments(argc, argv)
+#define GAME_LAUNCHER_EXTRA_HELP                                               \
+  "\t--train - train the shared War1gus AI policy\n"                           \
+  "\t--reset-train - reset then train the shared War1gus AI policy\n"
+
 #include <stratagus-game-launcher.h>

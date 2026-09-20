@@ -41,6 +41,49 @@ local ORC_UNITS = {
 
 local COLLECT_GOLD = {0, 60, 40, 0, 0, 0, 0}
 local COLLECT_WOOD = {0, 40, 60, 0, 0, 0, 0}
+local INT32_MIN = -2147483648
+local INT32_MAX = 2147483647
+
+local function ClampInt32(value)
+   if value < INT32_MIN then
+      return INT32_MIN
+   end
+   if value > INT32_MAX then
+      return INT32_MAX
+   end
+   return value
+end
+
+local function War1gusAiPotential(playerIndex)
+   local gold = GetPlayerData(playerIndex, "TotalResources", "gold")
+   local wood = GetPlayerData(playerIndex, "TotalResources", "wood")
+   return math.floor(GetPlayerData(playerIndex, "Score") / 10) +
+      math.floor((gold + wood) / 100) +
+      GetPlayerData(playerIndex, "TotalUnits") +
+      2 * GetPlayerData(playerIndex, "TotalBuildings")
+end
+
+local function War1gusAiStepReward(playerIndex)
+   local potentials = stratagus.gameData.AIState.war1gusRewardPotentials
+   local potential = War1gusAiPotential(playerIndex)
+   local previous = potentials[playerIndex]
+   potentials[playerIndex] = potential
+   if previous == nil then
+      return 0
+   end
+   return ClampInt32(potential - previous)
+end
+
+function War1gusAiTerminalReward(playerIndex)
+   local bonus = 0
+   if GetPlayerData(playerIndex, "TotalNumUnits") == 0 then
+      bonus = -100
+   elseif GetNumOpponents(playerIndex) == 0 then
+      bonus = 100
+   end
+   return ClampInt32(War1gusAiStepReward(playerIndex) + bonus)
+end
+
 
 local function ActiveUnitCount(playerIndex, ident)
    return GetPlayerData(playerIndex, "UnitTypesAiActiveCount", ident)
@@ -271,6 +314,7 @@ local War1gusAiActionNames = {
 function War1gusAI()
    local playerIndex = AiPlayer()
    local state = War1gusAiState(playerIndex)
+   local reward = War1gusAiStepReward(playerIndex)
    EnsureBuildingSpace(playerIndex, state)
    MaintainResourceManager(state)
 
@@ -280,7 +324,7 @@ function War1gusAI()
       return
    end
 
-   local action = AiProcessorStep(handle, 0, state)
+   local action = AiProcessorStep(handle, reward, state)
    local execute = War1gusAiActions[action]
    local command = War1gusAiActionNames[action]
    if execute == nil then

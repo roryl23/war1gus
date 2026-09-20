@@ -44,11 +44,11 @@ macOS: ![Build Status](https://github.com/Wargus/war1gus/actions/workflows/macos
 
 ### War1gus AI
 
-This fork adds an experimental Julia/Flux transformer policy as an AI
+This fork adds an experimental Julia/Flux actor-critic policy as an AI
 opponent. The policy receives player-visible economy, infrastructure, and army
 state from Stratagus and selects one of ten validated Lua strategy actions.
-Deterministic progression constraints keep the untrained model's choices legal
-and useful; this is not a self-training system.
+Deterministic progression constraints keep actions legal while a shared policy
+learns from self-play.
 
 #### Usage
 
@@ -75,6 +75,41 @@ bash build.sh War1gus
 ./build/war1gus
 ```
 
-Select `war1gus-ai` for a computer player. The Lua integration starts
-`scripts/ai/war1gus/build/bin/War1gusAI` on demand and closes it when the game
-ends.
+Select `war1gus-ai` for a computer player. The Lua integration starts the
+repository build at `scripts/ai/war1gus/build/bin/War1gusAI` when it is
+available, then falls back to the installed game-data copy. Set
+`WAR1GUS_AI_BINARY` to use another executable explicitly. The process starts on
+demand and closes when the game ends.
+
+Normal launches perform deterministic inference from the saved policy:
+
+```sh
+./build/war1gus
+```
+
+Enable online self-play training for every selected `war1gus-ai` player with:
+
+```sh
+./build/war1gus --train
+```
+
+Continue training loads both model and optimizer state from
+`$XDG_STATE_HOME/war1gus/actor_critic.jls`, or
+`~/.local/state/war1gus/actor_critic.jls` when `XDG_STATE_HOME` is unset.
+Start again from the seeded initial policy and discard that checkpoint with:
+
+```sh
+./build/war1gus --reset-train
+```
+
+`--reset-train` implies training and is consumed by the first AI process in
+that launcher session; later matches continue with `--train` instead of
+resetting the first match's updates. Each AI connection attributes the next
+signed reward to its previous state and action. Rewards combine score,
+harvested resources, produced units, constructed buildings, and the terminal
+win/loss outcome. Transitions from all AI players enter one ordered 32-sample
+queue; the triggering connection performs one shared actor-critic batch update.
+The server withholds action responses only while that update is running.
+Stratagus checks for a response every 1000 milliseconds and reconnects after
+an actual socket failure, so gameplay pauses instead of dropping or duplicating
+the decision during a live update.

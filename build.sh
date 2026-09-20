@@ -11,9 +11,9 @@ git submodule update --init third-party stratagus scripts/ai/war1gus && \
 git -C scripts/ai/war1gus switch main && \
 git -C scripts/ai/war1gus fetch origin main && \
 git -C scripts/ai/war1gus merge --ff-only origin/main && \
-git -C stratagus switch allow-io && \
-git -C stratagus fetch origin allow-io && \
-git -C stratagus merge --ff-only origin/allow-io || exit $?
+git -C stratagus switch add-war1gus-ai && \
+git -C stratagus fetch origin add-war1gus-ai && \
+git -C stratagus merge --ff-only origin/add-war1gus-ai || exit $?
 
 if [ -z "$stage" ]; then
   root=$PWD

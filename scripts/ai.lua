@@ -489,9 +489,41 @@ local WAR1GUS_AI_HOST = "127.0.0.1"
 local WAR1GUS_AI_PORT = 48721
 local WAR1GUS_AI_STATE_DIMENSION = 18
 local WAR1GUS_AI_ACTION_DIMENSION = 10
+local function War1gusAiMode()
+   local mode = os.getenv("WAR1GUS_AI_MODE")
+   if mode == nil or mode == "" then
+      return nil
+   end
+   if mode ~= "train" and mode ~= "reset-train" then
+      error("invalid WAR1GUS_AI_MODE: " .. mode)
+   end
+   return mode
+end
+local war1gusAiMode = War1gusAiMode()
+local function War1gusAiFileExists(path)
+   local file = io.open(path, "rb")
+   if file == nil then
+      return false
+   end
+   file:close()
+   return true
+end
+
+
+
 local function War1gusAiBinary()
+   local configuredBinary = os.getenv("WAR1GUS_AI_BINARY")
+   if configuredBinary ~= nil and configuredBinary ~= "" then
+      if not War1gusAiFileExists(configuredBinary) then
+         error("WAR1GUS_AI_BINARY is not accessible: " .. configuredBinary)
+      end
+      return configuredBinary
+   end
+   if War1gusAiFileExists(WAR1GUS_AI_RELATIVE_BINARY) then
+      return WAR1GUS_AI_RELATIVE_BINARY
+   end
    local libraryBinary = LibraryPath() .. "/" .. WAR1GUS_AI_RELATIVE_BINARY
-   if CanAccessFile(libraryBinary) then
+   if War1gusAiFileExists(libraryBinary) then
       return libraryBinary
    end
    return WAR1GUS_AI_RELATIVE_BINARY
@@ -509,6 +541,8 @@ local function CreateAiGameData()
       stratagus.gameData.AIState.loop_index = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
       stratagus.gameData.AIState.war1gusRoadsGenerated = {}
       stratagus.gameData.AIState.lastWar1gusAiCommand = {}
+      stratagus.gameData.AIState.war1gusRewardPotentials = {}
+
    end
 end
 
@@ -525,7 +559,7 @@ local function CloseWar1gusAiServer()
    end
 
    for playerIndex, handle in pairs(server.handles) do
-      pcall(AiProcessorEnd, handle, 0, server.states[playerIndex])
+      pcall(AiProcessorEnd, handle, War1gusAiTerminalReward(playerIndex), server.states[playerIndex])
    end
    server.handles = {}
    server.states = {}
@@ -537,15 +571,20 @@ function StartWar1gusAiServer()
    CreateAiGameData()
    local server = stratagus.gameData.War1gusAiServer
    if server == nil then
+      local mode = war1gusAiMode
       local command = string.format(
-         "%q --host %s --port %d",
+         "%q --host %s --port %d%s",
          War1gusAiBinary(),
          WAR1GUS_AI_HOST,
-         WAR1GUS_AI_PORT
+         WAR1GUS_AI_PORT,
+         mode == nil and "" or " --" .. mode
       )
       local process = io.popen(command, "w")
       if process == nil then
          return nil
+      end
+      if war1gusAiMode == "reset-train" then
+         war1gusAiMode = "train"
       end
       server = {
          process = process,
