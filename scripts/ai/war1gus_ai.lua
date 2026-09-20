@@ -21,11 +21,16 @@ function GetOtherPlayers()
     return otherPlayers
 end
 
+
 function War1gusAI()
     -- TODO: these initializations should be configurations
     --       in the menus, or perhaps map properties
-    RevealMap()
-    if stratagus.gameData.AIEngine.thinking == false then
+    RevealMap("explored")
+    local aiEngine = StartWar1gusAiEngine()
+
+    if aiEngine.loop_funcs ~= nil then
+        return AiLoop(aiEngine.loop_funcs, stratagus.gameData.AIState.loop_index)
+    elseif aiEngine.thinking == false then
         -- TODO: generate gamestate from what can be seen by current units
         -- Generate current game state
         local otherPlayers = GetOtherPlayers()
@@ -39,29 +44,30 @@ function War1gusAI()
             end
         end
         -- Send current game state to engine
-        stratagus.gameData.AIEngine:send("gamestate test")
-        stratagus.gameData.AIEngine.thinking = true
+        aiEngine:send("gamestate test")
+        aiEngine.thinking = true
     else
-        local response = stratagus.gameData.AIEngine.receive()
+        local response = aiEngine:receive()
         if response ~= nil then
-            stratagus.gameData.AIEngine.thinking = false
+            aiEngine.thinking = false
             if debug then
                 print("AI engine response: " .. response)
             end
-            local aiFunc, err = loadstring(response)
-            if aiFunc then
-                return function()
-                    AiLoop(aiFunc, stratagus.gameData.AIState.loop_index)
-                end
-            else
-                print("Error loading AI generated Lua code: " .. err)
+            local responseChunk, err = loadstring(response)
+            if not responseChunk then
+                error("Error loading AI generated Lua code: " .. err)
             end
+            local loopFuncs = responseChunk()
+            if type(loopFuncs) ~= "table" then
+                error("AI generated Lua code must return a table of step functions")
+            end
+            aiEngine.loop_funcs = loopFuncs
+            stratagus.gameData.AIState.loop_index[AiPlayer() + 1] = 1
+            return AiLoop(loopFuncs, stratagus.gameData.AIState.loop_index)
         end
     end
-    -- No action taken, so we sleep the AI for a bit
-    return function()
-        AiLoop({function() return AiSleep(5000) end}, stratagus.gameData.AIState.index)
-    end
+    -- No action taken, so sleep the AI for a bit.
+    return AiSleep(5000)
 end
 
 DefineAi("war1gus-ai", "*", "war1gus-ai", War1gusAI)

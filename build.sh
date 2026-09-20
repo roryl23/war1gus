@@ -7,7 +7,10 @@ stage="${1:-}"
 
 git submodule init && \
 git submodule sync && \
-git submodule update
+git submodule update --init third-party stratagus && \
+git -C stratagus switch allow-io && \
+git -C stratagus fetch origin allow-io && \
+git -C stratagus merge --ff-only origin/allow-io || exit $?
 
 if [ -z "$stage" ]; then
   root=$PWD
@@ -23,6 +26,7 @@ if [ -z "$stage" ]; then
     -DBUILD_VENDORED_LUA=ON \
     -DBUILD_VENDORED_SDL=ON \
     -DBUILD_VENDORED_MEDIA_LIBS=ON \
+    -DDOWNLOAD_FREEPATS=ON \
     -DBUILD_TESTING=1 \
     -DENABLE_DEV=ON && \
   cmake --build . --config Debug && \
@@ -34,7 +38,7 @@ if [ -z "$stage" ]; then
   cmake . -B build \
     -DCMAKE_FIND_FRAMEWORK=LAST \
     -DSTRATAGUS_INCLUDE_DIR=stratagus/gameheaders \
-    -DSTRATAGUS=stratagus/build/stratagus-dbg \
+    -DSTRATAGUS=/usr/local/games/stratagus-dbg \
     -DENABLE_VENDORED_LIBS=OFF && \
   cmake --build build --config Release && \
   cd build && sudo make install
@@ -48,6 +52,7 @@ elif [ "$stage" = "Stratagus" ]; then
     -DBUILD_VENDORED_LUA=ON \
     -DBUILD_VENDORED_SDL=ON \
     -DBUILD_VENDORED_MEDIA_LIBS=ON \
+    -DDOWNLOAD_FREEPATS=ON \
     -DBUILD_TESTING=1 \
     -DENABLE_DEV=ON \
     -DEAGER_LOAD=ON && \
@@ -60,7 +65,7 @@ elif [ "$stage" = "War1gus" ]; then
   cmake . -B build \
     -DCMAKE_FIND_FRAMEWORK=LAST \
     -DSTRATAGUS_INCLUDE_DIR=stratagus/gameheaders \
-    -DSTRATAGUS=stratagus/build/stratagus \
+    -DSTRATAGUS=/usr/local/games/stratagus \
     -DENABLE_VENDORED_LIBS=OFF && \
   cmake --build build --config Release && \
   cd build && sudo make install

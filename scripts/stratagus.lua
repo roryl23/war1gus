@@ -300,7 +300,9 @@ end
 --  Tables-Part
 -------------------------------------------------------------------------------
 
-Load("preferences.lua")
+if CanAccessFile("preferences.lua") then
+   Load("preferences.lua")
+end
 if wc1 == nil then wc1 = {} end
 preferences = wc1.preferences
 if (preferences == nil) then

@@ -491,12 +491,17 @@ function AiEngineInterface(binaryPath)
       end,
       receive = function(self)
          -- TODO: here we should generate an os-aware file path to pass to War1gusAI
-         local readPipe, readErr = io.open("/tmp/War1gusAI.out", "r")
+         local readPipe = io.open("/tmp/War1gusAI.out", "r")
          if not readPipe then
-            print("Failed to read engine output file: " .. readErr)
             return nil
          end
-         return readPipe:read()
+         local response = readPipe:read("*a")
+         readPipe:close()
+         local success, removeErr = os.remove("/tmp/War1gusAI.out")
+         if not success then
+            error("Failed to consume War1gusAI output file: " .. (removeErr or "Unknown error"))
+         end
+         return response
       end,
       close = function(self)
          self.writePipe:close()
@@ -517,17 +522,24 @@ local function CreateAiGameData()
       stratagus.gameData.AIState.index = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
       stratagus.gameData.AIState.loop_index = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
    end
+end
+
+function StartWar1gusAiEngine()
+   CreateAiGameData()
    if stratagus.gameData.AIEngine == nil then
       -- TODO: here we should generate an os-aware file path to pass to War1gusAI
-      local success, err = os.remove("/tmp/War1gusAI.out")
-      if not success then
-         print("Failed to delete War1gusAI output file: " .. (err or "Unknown error"))
+      if CanAccessFile("/tmp/War1gusAI.out") then
+         local success, err = os.remove("/tmp/War1gusAI.out")
+         if not success then
+            print("Failed to delete War1gusAI output file: " .. (err or "Unknown error"))
+         end
       end
       stratagus.gameData.AIEngine = AiEngineInterface("scripts/ai/war1gus/build/bin/War1gusAI")
       if not stratagus.gameData.AIEngine then
-         print("Failed to open AI engine!")
-     end
+         error("Failed to open AI engine!")
+      end
    end
+   return stratagus.gameData.AIEngine
 end
 
 local function CleanAiGameData()
