@@ -58,9 +58,11 @@ localhost. It does not exchange commands through temporary files or execute
 model-generated Lua.
 
 First build and extract War1gus as described above. Install Julia 1.12 with
-`juliaup`, then build the AI application:
+`juliaup`, then initialize the AI source, a `main`-tracking submodule, and
+build the AI application:
 
 ```sh
+git submodule update --init scripts/ai/war1gus
 cd scripts/ai/war1gus
 julia --project -e 'using Pkg; Pkg.instantiate()'
 bash build.sh

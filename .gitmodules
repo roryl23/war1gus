@@ -5,3 +5,7 @@
 	path = stratagus
 	url = https://github.com/roryl23/stratagus
 	branch = allow-io
+[submodule "scripts/ai/war1gus"]
+	path = scripts/ai/war1gus
+	url = https://github.com/roryl23/war1gus-ai
+	branch = main

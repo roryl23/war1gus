@@ -7,7 +7,7 @@ stage="${1:-}"
 
 git submodule init && \
 git submodule sync && \
-git submodule update --init third-party stratagus && \
+git submodule update --init third-party stratagus scripts/ai/war1gus && \
 git -C stratagus switch allow-io && \
 git -C stratagus fetch origin allow-io && \
 git -C stratagus merge --ff-only origin/allow-io || exit $?
