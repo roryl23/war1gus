@@ -44,6 +44,7 @@ if [ -z "$stage" ]; then
     -DSTRATAGUS=/usr/local/games/stratagus-dbg \
     -DENABLE_VENDORED_LIBS=OFF && \
   cmake --build build --config Release && \
+  cmake -E copy_directory stratagus/build/freepats build/freepats && \
   cd build && sudo make install
 elif [ "$stage" = "Stratagus" ]; then
   cd stratagus && \
@@ -71,5 +72,6 @@ elif [ "$stage" = "War1gus" ]; then
     -DSTRATAGUS=/usr/local/games/stratagus \
     -DENABLE_VENDORED_LIBS=OFF && \
   cmake --build build --config Release && \
+  cmake -E copy_directory stratagus/build/freepats build/freepats && \
   cd build && sudo make install
 fi
