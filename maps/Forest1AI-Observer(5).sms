@@ -1,0 +1,48 @@
+-- Stratagus Map Setup
+-- Wraps the extracted forest1 runtime map without vendoring generated data.
+-- File licensed under the GNU GPL version 2.
+
+Load("maps/forest1.sms")
+
+-- Replace the original player configuration with four War1gus AI players
+-- and a unitless human observer.
+Player(0, "ai-name", "war1gus-ai")
+Player(1, "ai-name", "war1gus-ai")
+Player(2, "ai-name", "war1gus-ai")
+Player(3, "ai-name", "war1gus-ai")
+SetAiType(0, "war1gus-ai")
+SetAiType(1, "war1gus-ai")
+SetAiType(2, "war1gus-ai")
+SetAiType(3, "war1gus-ai")
+SetStartView(4, 32, 32)
+SetPlayerData(4, "Resources", "wood", 1000)
+SetPlayerData(4, "Resources", "gold", 1000)
+SetPlayerData(4, "Resources", "lumber", 0)
+SetPlayerData(4, "RaceName", "human")
+
+-- Make the four AI players fight while preserving the human observer.
+AddTrigger(function() return GameCycle > 0 end, function()
+   SetDiplomacy(0, "enemy", 1)
+   SetDiplomacy(1, "enemy", 0)
+   SetDiplomacy(0, "enemy", 2)
+   SetDiplomacy(2, "enemy", 0)
+   SetDiplomacy(0, "enemy", 3)
+   SetDiplomacy(3, "enemy", 0)
+   SetDiplomacy(1, "enemy", 2)
+   SetDiplomacy(2, "enemy", 1)
+   SetDiplomacy(1, "enemy", 3)
+   SetDiplomacy(3, "enemy", 1)
+   SetDiplomacy(2, "enemy", 3)
+   SetDiplomacy(3, "enemy", 2)
+   SetDiplomacy(0, "neutral", 4)
+   SetDiplomacy(4, "neutral", 0)
+   SetDiplomacy(1, "neutral", 4)
+   SetDiplomacy(4, "neutral", 1)
+   SetDiplomacy(2, "neutral", 4)
+   SetDiplomacy(4, "neutral", 2)
+   SetDiplomacy(3, "neutral", 4)
+   SetDiplomacy(4, "neutral", 3)
+   RevealMap("explored")
+   SetFogOfWar(false)
+   return false
+end)
