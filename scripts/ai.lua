@@ -485,19 +485,45 @@ end
 --
 
 local WAR1GUS_AI_RELATIVE_BINARY = "scripts/ai/war1gus/build/bin/War1gusAI"
-local WAR1GUS_AI_HOST = "127.0.0.1"
-local function War1gusAiPort()
-   local configuredPort = os.getenv("WAR1GUS_AI_PORT")
-   if configuredPort == nil or configuredPort == "" then
-      return 48721
+local function War1gusAiHost()
+   local host = preferences.War1gusAiHost
+   if type(host) ~= "string" or host == "" or #host > 253
+      or host:match("^[A-Za-z0-9%.%-]+$") == nil
+      or host:match("^%.") ~= nil or host:match("%.$") ~= nil or host:match("%.%.") ~= nil then
+      error("invalid War1gusAiHost: expected a hostname or IPv4 address")
    end
-   local port = tonumber(configuredPort)
+   for label in host:gmatch("[^%.]+") do
+      if #label > 63 or label:match("^[A-Za-z0-9]") == nil
+         or label:match("[A-Za-z0-9]$") == nil
+         or label:match("^[A-Za-z0-9%-]+$") == nil then
+         error("invalid War1gusAiHost: expected a hostname or IPv4 address")
+      end
+   end
+   return host
+end
+local function War1gusAiPortValue(name, value)
+   if type(value) == "string" and value:match("^%d+$") == nil then
+      error("invalid " .. name .. ": " .. tostring(value))
+   end
+   if type(value) ~= "number" and type(value) ~= "string" then
+      error("invalid " .. name .. ": " .. tostring(value))
+   end
+   local port = tonumber(value)
    if port == nil or port ~= math.floor(port) or port < 1 or port > 65535 then
-      error("invalid WAR1GUS_AI_PORT: " .. configuredPort)
+      error("invalid " .. name .. ": " .. tostring(value))
    end
    return port
 end
-local WAR1GUS_AI_PORT = War1gusAiPort()
+local function War1gusAiPort()
+   local configuredPort = os.getenv("WAR1GUS_AI_PORT")
+   if configuredPort ~= nil and configuredPort ~= "" then
+      return War1gusAiPortValue("WAR1GUS_AI_PORT", configuredPort)
+   end
+   return War1gusAiPortValue("War1gusAiPort", preferences.War1gusAiPort)
+end
+local function War1gusAiEndpoint()
+   return War1gusAiHost(), War1gusAiPort()
+end
 local function War1gusAiMode()
    local mode = os.getenv("WAR1GUS_AI_MODE")
    if mode == nil or mode == "" then
@@ -615,11 +641,12 @@ function StartWar1gusAiServer()
    local server = stratagus.gameData.War1gusAiServer
    if server == nil then
       local mode = war1gusAiMode
+      local host, port = War1gusAiEndpoint()
       local command = string.format(
          "%q --host %s --port %d%s",
          War1gusAiBinary(),
-         WAR1GUS_AI_HOST,
-         WAR1GUS_AI_PORT,
+         host,
+         port,
          mode == nil and "" or " --" .. mode
       )
       local process = io.popen(command, "w")
@@ -631,6 +658,8 @@ function StartWar1gusAiServer()
       end
       server = {
          process = process,
+         host = host,
+         port = port,
          handles = {},
          states = {}
       }
@@ -651,7 +680,7 @@ function GetWar1gusAiProcessor(playerIndex, state)
 
    local handle = server.handles[playerIndex]
    if handle == nil then
-      handle = AiProcessorSetup(WAR1GUS_AI_HOST, WAR1GUS_AI_PORT)
+      handle = AiProcessorSetup(server.host, server.port)
       if handle == nil then
          return nil
       end

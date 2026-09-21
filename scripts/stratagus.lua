@@ -351,6 +351,8 @@ DefaultPreference("DungeonSightBlocking", true)    -- Enable/Disable sight block
 DefaultPreference("FieldOfViewType", "simple-radial")    -- default field of view type (possibe values: "simple-radial" and "shadow-casting" )
 DefaultPreference("RebalancedStats", true)
 DefaultPreference("OriginalPixelRatio", true)
+DefaultPreference("War1gusAiHost", "localhost")
+DefaultPreference("War1gusAiPort", 48721)
 
 wc1.preferences = preferences
 

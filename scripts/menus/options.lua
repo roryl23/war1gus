@@ -464,6 +464,66 @@ function RunGameOptionsMenu()
   end
 end
 
+local function IsValidAiServerHost(host)
+  if string.len(host) == 0 or string.len(host) > 253 then
+    return false
+  end
+  if not string.match(host, "^[A-Za-z0-9%.%-]+$") or
+     string.match(host, "^%.") or
+     string.match(host, "%.$") or
+     string.match(host, "%.%.") then
+    return false
+  end
+  for label in string.gmatch(host, "[^%.]+") do
+    if string.len(label) > 63 or
+       not string.match(label, "^[A-Za-z0-9]") or
+       not string.match(label, "[A-Za-z0-9]$") or
+       not string.match(label, "^[A-Za-z0-9%-]+$") then
+      return false
+    end
+  end
+  return true
+end
+
+function RunAiServerOptionsMenu()
+  local menu = WarMenu()
+  local offx = (Video.Width - 320) / 2
+  local offy = (Video.Height - 200) / 2
+  local titleLabel = Label("AI Server")
+  menu:add(titleLabel, offx + 160 - titleLabel:getWidth() / 2, offy + 52)
+
+  menu:addLabel("Host:", offx + 76, offy + 80)
+  local host = menu:addTextInputField(
+    preferences.War1gusAiHost or "localhost", offx + 116, offy + 76, 128)
+  menu:addLabel("Port:", offx + 76, offy + 102)
+  local port = menu:addTextInputField(
+    tostring(preferences.War1gusAiPort or 48721), offx + 116, offy + 98, 128)
+
+  menu:addHalfButton("~!OK", "o", offx + 76, offy + 132,
+    function()
+      local hostText = host:getText()
+      local portText = port:getText()
+      local portNumber = tonumber(portText)
+      if not IsValidAiServerHost(hostText) then
+        ErrorMenu("Please enter a valid AI server host.")
+        return
+      end
+      if not string.match(portText, "^%d+$") or
+         not portNumber or portNumber < 1 or portNumber > 65535 then
+        ErrorMenu("Please enter an AI server port from 1 to 65535.")
+        return
+      end
+
+      preferences.War1gusAiHost = hostText
+      preferences.War1gusAiPort = portNumber
+      SavePreferences()
+      menu:stop()
+    end)
+  menu:addHalfButton("~!Cancel", "c", offx + 184, offy + 132,
+    function() menu:stop() end)
+
+  return menu:run()
+end
 function RunOptionsSubMenu()
   local menu = WarMenu()
   local offx = (Video.Width - 320) / 2
@@ -475,6 +535,8 @@ function RunOptionsSubMenu()
     function() RunPreferencesMenu() end)
   menu:addFullButton("Video (~<F9~>)", "f9", offx + 96, offy + 52 + 18*4,
     function() RunVideoOptionsMenu() end)
+  menu:addFullButton("AI Server", "a", offx + 96, offy + 52 + 18*5,
+    function() RunAiServerOptionsMenu() end)
   
   menu:addFullButton("~!Previous Menu", "p", offx + 96, offy + 52 + 18*7,
     function() menu:stop() end)
