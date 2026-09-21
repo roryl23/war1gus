@@ -35,6 +35,8 @@ mv war1gus.icns War1gus.app/Contents/Resources/
 
 # Bundle resources
 cp -R ../campaigns ../contrib ../maps ../shaders ../scripts War1gus.app/Contents/Resources/
+rm -rf War1gus.app/Contents/Resources/scripts/ai/war1gus/ai-training
+rm -rf War1gus.app/Contents/Resources/scripts/ai/war1gus/ai-evaluation
 
 cp ../build/war1tool War1gus.app/Contents/MacOS/
 cp ../build/war1gus War1gus.app/Contents/MacOS/

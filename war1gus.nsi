@@ -269,7 +269,7 @@ Section "-${NAME}"
 	SetOutPath "$INSTDIR\shaders"
 	File /r "shaders\"
 	SetOutPath "$INSTDIR\scripts"
-	File /r "scripts\"
+	File /r /x "ai-training" /x "ai-evaluation" "scripts\"
 	SetOutPath "$INSTDIR\campaigns"
 	File /r "campaigns\"
 

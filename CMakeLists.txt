@@ -164,7 +164,9 @@ if(STRATAGUS_FOUND)
     install(FILES "war1gus.png" DESTINATION ${ICONDIR})
     install(FILES "war1gus.xpm" DESTINATION ${ICONDIR})
     install(FILES "${PROJECT_BINARY_DIR}/war1gus.desktop" DESTINATION ${DESKTOPDIR})
-    install(DIRECTORY campaigns contrib maps scripts shaders DESTINATION ${SHAREDIR})
+    install(DIRECTORY campaigns contrib maps scripts shaders DESTINATION ${SHAREDIR}
+      PATTERN "ai-training" EXCLUDE
+      PATTERN "ai-evaluation" EXCLUDE)
   elseif (WIN32)
     set(war1gus_SRCS ${war1gus_SRCS} war1gus.rc)
     find_package(MakeNSIS)
