@@ -27,6 +27,8 @@ local MAX_CANDIDATES = 512
 local UINT32_MODULUS = 4294967296
 local INT32_SIGN = 2147483648
 
+
+local VERBOSE_LOGGING = os.getenv("WAR1GUS_AI_VERBOSE_LOG") == "1"
 local KIND_WAIT = 0
 local KIND_GATHER_GOLD = 1
 local KIND_GATHER_WOOD = 2
@@ -1322,6 +1324,9 @@ local function ExecutePlan(playerIndex, plan)
 end
 
 local function LogReward(playerIndex, components)
+   if not VERBOSE_LOGGING then
+      return
+   end
    War1gusAiLog("war1gus-ai.reward", {
       {name = "player", value = tostring(playerIndex)},
       {name = "enemy_progress", value = tostring(components.enemyProgress)},
@@ -1370,12 +1375,14 @@ function War1gusAI()
 
    local plan = plans[selected]
    local accepted = ExecutePlan(playerIndex, plan)
-   War1gusAiLog("war1gus-ai.action", {
-      {name = "player", value = tostring(playerIndex)},
-      {name = "candidate", value = tostring(selected - 1)},
-      {name = "kind", value = JsonString(KIND_NAMES[plan.candidateKind])},
-      {name = "accepted", value = tostring(accepted)}
-   })
+   if VERBOSE_LOGGING then
+      War1gusAiLog("war1gus-ai.action", {
+         {name = "player", value = tostring(playerIndex)},
+         {name = "candidate", value = tostring(selected - 1)},
+         {name = "kind", value = JsonString(KIND_NAMES[plan.candidateKind])},
+         {name = "accepted", value = tostring(accepted)}
+      })
+   end
 end
 
 DefineAi("war1gus-ai", "*", "war1gus-ai", War1gusAI, 5)
