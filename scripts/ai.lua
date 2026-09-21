@@ -486,15 +486,24 @@ end
 
 local WAR1GUS_AI_RELATIVE_BINARY = "scripts/ai/war1gus/build/bin/War1gusAI"
 local WAR1GUS_AI_HOST = "127.0.0.1"
-local WAR1GUS_AI_PORT = 48721
-local WAR1GUS_AI_STATE_DIMENSION = 34
-local WAR1GUS_AI_ACTION_DIMENSION = 24
+local function War1gusAiPort()
+   local configuredPort = os.getenv("WAR1GUS_AI_PORT")
+   if configuredPort == nil or configuredPort == "" then
+      return 48721
+   end
+   local port = tonumber(configuredPort)
+   if port == nil or port ~= math.floor(port) or port < 1 or port > 65535 then
+      error("invalid WAR1GUS_AI_PORT: " .. configuredPort)
+   end
+   return port
+end
+local WAR1GUS_AI_PORT = War1gusAiPort()
 local function War1gusAiMode()
    local mode = os.getenv("WAR1GUS_AI_MODE")
    if mode == nil or mode == "" then
       return nil
    end
-   if mode ~= "train" and mode ~= "reset-train" then
+   if mode ~= "train" and mode ~= "reset-train" and mode ~= "league-train" and mode ~= "league-evaluate" then
       error("invalid WAR1GUS_AI_MODE: " .. mode)
    end
    return mode
@@ -537,15 +546,40 @@ local function CreateAiGameData()
    end
    if stratagus.gameData.AIState == nil then
       stratagus.gameData.AIState = {}
-      stratagus.gameData.AIState.index = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
-      stratagus.gameData.AIState.loop_index = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
-      stratagus.gameData.AIState.war1gusRoadsGenerated = {}
-      stratagus.gameData.AIState.lastWar1gusAiCommand = {}
-      stratagus.gameData.AIState.war1gusRewardBookkeeping = {}
+   end
+   local aiState = stratagus.gameData.AIState
+   if aiState.index == nil then
+      aiState.index = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
+   end
+   if aiState.loop_index == nil then
+      aiState.loop_index = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
+   end
+   if aiState.war1gusRoadsGenerated == nil then
+      aiState.war1gusRoadsGenerated = {}
+   end
+   if aiState.war1gusLastMacroCycle == nil then
+      aiState.war1gusLastMacroCycle = {}
+   end
+   if aiState.war1gusRewardBookkeeping == nil then
+      aiState.war1gusRewardBookkeeping = {}
+   end
+   if aiState.war1gusAiEnded == nil then
+      aiState.war1gusAiEnded = {}
    end
 end
 
 
+
+local function War1gusAiTerminalState(state)
+   local entityCount = math.max(0, math.floor(tonumber(state[11]) or 0))
+   local wordCount = 22 + 14 * entityCount
+   local terminalState = {}
+   for index = 1, wordCount do
+      terminalState[index] = state[index]
+   end
+   terminalState[12] = 0
+   return terminalState
+end
 
 local function CloseWar1gusAiServer()
    if stratagus == nil or stratagus.gameData == nil then
@@ -565,7 +599,10 @@ local function CloseWar1gusAiServer()
             state = finalState
          end
       end
-      pcall(AiProcessorEnd, handle, War1gusAiTerminalReward(playerIndex, state), state)
+      if type(state) == "table" then
+         state = War1gusAiTerminalState(state)
+         pcall(AiProcessorEnd, handle, War1gusAiTerminalReward(playerIndex, state), state)
+      end
    end
    server.handles = {}
    server.states = {}
@@ -603,25 +640,47 @@ function StartWar1gusAiServer()
 end
 
 function GetWar1gusAiProcessor(playerIndex, state)
+   CreateAiGameData()
+   if stratagus.gameData.AIState.war1gusAiEnded[playerIndex] then
+      return nil
+   end
    local server = StartWar1gusAiServer()
    if server == nil then
       return nil
    end
 
-   server.states[playerIndex] = state
    local handle = server.handles[playerIndex]
    if handle == nil then
-      handle = AiProcessorSetup(
-         WAR1GUS_AI_HOST,
-         WAR1GUS_AI_PORT,
-         WAR1GUS_AI_STATE_DIMENSION,
-         WAR1GUS_AI_ACTION_DIMENSION
-      )
-      if handle ~= nil then
-         server.handles[playerIndex] = handle
+      handle = AiProcessorSetup(WAR1GUS_AI_HOST, WAR1GUS_AI_PORT)
+      if handle == nil then
+         return nil
       end
+      server.handles[playerIndex] = handle
    end
+   server.states[playerIndex] = state
    return handle
+end
+
+function EndWar1gusAiProcessor(playerIndex, reward, state)
+   CreateAiGameData()
+   local aiState = stratagus.gameData.AIState
+   if aiState.war1gusAiEnded[playerIndex] then
+      return false
+   end
+   aiState.war1gusAiEnded[playerIndex] = true
+
+   local server = stratagus.gameData.War1gusAiServer
+   if server == nil then
+      return false
+   end
+   local handle = server.handles[playerIndex]
+   if handle == nil then
+      return false
+   end
+   server.handles[playerIndex] = nil
+   server.states[playerIndex] = nil
+   pcall(AiProcessorEnd, handle, reward, state)
+   return true
 end
 
 local function CleanAiGameData()

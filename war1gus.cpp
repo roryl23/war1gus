@@ -79,6 +79,8 @@ static void SetWar1gusAiMode(const char *mode) {
 static void War1gusLauncherPreArguments(int &argc, char *argv[]) {
   bool train = false;
   bool resetTrain = false;
+  bool leagueTrain = false;
+  bool leagueEvaluate = false;
   int writeIndex = 1;
 
   for (int readIndex = 1; readIndex < argc; ++readIndex) {
@@ -86,6 +88,10 @@ static void War1gusLauncherPreArguments(int &argc, char *argv[]) {
       train = true;
     } else if (!strcmp(argv[readIndex], "--reset-train")) {
       resetTrain = true;
+    } else if (!strcmp(argv[readIndex], "--league-train")) {
+      leagueTrain = true;
+    } else if (!strcmp(argv[readIndex], "--league-evaluate")) {
+      leagueEvaluate = true;
     } else {
       argv[writeIndex++] = argv[readIndex];
     }
@@ -93,13 +99,29 @@ static void War1gusLauncherPreArguments(int &argc, char *argv[]) {
   argc = writeIndex;
   argv[argc] = nullptr;
 
-  SetWar1gusAiMode(resetTrain ? "reset-train" : train ? "train" : nullptr);
+  const int aiModeCount =
+      static_cast<int>(train) + static_cast<int>(resetTrain) +
+      static_cast<int>(leagueTrain) + static_cast<int>(leagueEvaluate);
+  if (aiModeCount > 1) {
+    fprintf(stderr, "Only one AI mode may be selected: --train, --reset-train, "
+                    "--league-train, or --league-evaluate\n");
+    exit(EXIT_FAILURE);
+  }
+
+  SetWar1gusAiMode(leagueEvaluate ? "league-evaluate"
+                   : leagueTrain  ? "league-train"
+                   : resetTrain   ? "reset-train"
+                   : train        ? "train"
+                                  : nullptr);
 }
 
 #define GAME_LAUNCHER_PRE_ARGUMENT_HOOK(argc, argv)                            \
   War1gusLauncherPreArguments(argc, argv)
 #define GAME_LAUNCHER_EXTRA_HELP                                               \
   "\t--train - train the shared War1gus AI policy\n"                           \
-  "\t--reset-train - reset then train the shared War1gus AI policy\n"
+  "\t--reset-train - reset then train the shared War1gus AI policy\n"          \
+  "\t--league-train - train the shared War1gus AI policy against a league\n"   \
+  "\t--league-evaluate - evaluate the policy against a league without "        \
+  "updates\n"
 
 #include <stratagus-game-launcher.h>
