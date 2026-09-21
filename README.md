@@ -45,10 +45,12 @@ macOS: ![Build Status](https://github.com/Wargus/war1gus/actions/workflows/macos
 ### War1gus AI
 
 This fork adds an experimental Julia/Flux actor-critic policy as an AI
-opponent. The policy receives player-visible economy, infrastructure, and army
-state from Stratagus and selects one of ten validated Lua strategy actions.
-Deterministic progression constraints keep actions legal while a shared policy
-learns from self-play.
+opponent. The policy receives economy, infrastructure, army, and enemy-force
+state from Stratagus and selects one of 24 primitive commands: gathering,
+building, training, research, movement, repair, exploration, or an explicit
+target-class attack. Lua resolves actors and targets deterministically, then
+the engine executes the selected command directly. A producer-supplied legal
+mask prevents unavailable commands without running a second strategic policy.
 
 #### Usage
 
@@ -105,10 +107,12 @@ Start again from the seeded initial policy and discard that checkpoint with:
 `--reset-train` implies training and is consumed by the first AI process in
 that launcher session; later matches continue with `--train` instead of
 resetting the first match's updates. Each AI connection attributes the next
-signed reward to its previous state and action. Rewards combine score,
-harvested resources, produced units, constructed buildings, and the terminal
-win/loss outcome. Transitions from all AI players enter one ordered 32-sample
-queue; the triggering connection performs one shared actor-critic batch update.
+signed reward to its previous state and action. Rewards are normalized toward
+eliminating all enemy non-wall units and buildings: enemy losses are positive,
+own losses and idle steps are negative, and victory or defeat supplies the
+terminal bonus. Resource collection and production do not directly create
+reward. Transitions from all AI players enter one ordered 32-sample queue; the
+triggering connection performs one shared actor-critic batch update.
 The server withholds action responses only while that update is running.
 Stratagus checks for a response every 1000 milliseconds and reconnects after
 an actual socket failure, so gameplay pauses instead of dropping or duplicating

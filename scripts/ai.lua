@@ -487,8 +487,8 @@ end
 local WAR1GUS_AI_RELATIVE_BINARY = "scripts/ai/war1gus/build/bin/War1gusAI"
 local WAR1GUS_AI_HOST = "127.0.0.1"
 local WAR1GUS_AI_PORT = 48721
-local WAR1GUS_AI_STATE_DIMENSION = 18
-local WAR1GUS_AI_ACTION_DIMENSION = 10
+local WAR1GUS_AI_STATE_DIMENSION = 34
+local WAR1GUS_AI_ACTION_DIMENSION = 24
 local function War1gusAiMode()
    local mode = os.getenv("WAR1GUS_AI_MODE")
    if mode == nil or mode == "" then
@@ -541,8 +541,7 @@ local function CreateAiGameData()
       stratagus.gameData.AIState.loop_index = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
       stratagus.gameData.AIState.war1gusRoadsGenerated = {}
       stratagus.gameData.AIState.lastWar1gusAiCommand = {}
-      stratagus.gameData.AIState.war1gusRewardPotentials = {}
-
+      stratagus.gameData.AIState.war1gusRewardBookkeeping = {}
    end
 end
 
@@ -559,7 +558,14 @@ local function CloseWar1gusAiServer()
    end
 
    for playerIndex, handle in pairs(server.handles) do
-      pcall(AiProcessorEnd, handle, War1gusAiTerminalReward(playerIndex), server.states[playerIndex])
+      local state = server.states[playerIndex]
+      if War1gusAiFinalState ~= nil then
+         local ok, finalState = pcall(War1gusAiFinalState, playerIndex)
+         if ok and type(finalState) == "table" then
+            state = finalState
+         end
+      end
+      pcall(AiProcessorEnd, handle, War1gusAiTerminalReward(playerIndex, state), state)
    end
    server.handles = {}
    server.states = {}
