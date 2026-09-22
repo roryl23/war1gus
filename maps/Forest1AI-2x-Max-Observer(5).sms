@@ -7,6 +7,7 @@
 local ForestScale = 2
 local ForestOriginalSetTile = SetTile
 local ForestOriginalCreateUnit = CreateUnit
+local ForestOriginalSetStartView = SetStartView
 local ForestGoldMines = {}
 
 -- Scale terrain and unit positions while the extracted source map is loaded.
@@ -22,6 +23,10 @@ SetTile = function(tile, x, y, value, elevation)
          )
       end
    end
+end
+
+SetStartView = function(player, x, y)
+   ForestOriginalSetStartView(player, x * ForestScale, y * ForestScale)
 end
 
 CreateUnit = function(unitType, player, position)
@@ -40,8 +45,10 @@ Load("maps/forest1.sms")
 
 SetTile = ForestOriginalSetTile
 CreateUnit = ForestOriginalCreateUnit
+SetStartView = ForestOriginalSetStartView
 ForestOriginalSetTile = nil
 ForestOriginalCreateUnit = nil
+ForestOriginalSetStartView = nil
 
 -- Preserve the inherited four starting forces as War1gus AI players.
 SetStartView(0, 32, 32)
@@ -53,9 +60,9 @@ SetAiType(1, "war1gus-ai")
 SetAiType(2, "war1gus-ai")
 SetAiType(3, "war1gus-ai")
 
--- Give every inherited gold mine the established maximum map amount.
+-- Give every inherited gold mine the engine-supported maximum map amount.
 for _, goldMine in ipairs(ForestGoldMines) do
-   SetResourcesHeld(goldMine, 100000)
+   SetResourcesHeld(goldMine, 655350)
 end
 ForestGoldMines = nil
 
