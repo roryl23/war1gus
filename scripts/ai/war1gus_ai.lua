@@ -74,16 +74,16 @@ local HUMAN_TECH = {
    firstCityCenter = "unit-human-first-town-hall",
    cityCenters = HUMAN_CITY_CENTERS,
    buildings = {
-      {ident = "unit-road", producers = HUMAN_CITY_CENTERS, road = true, bootstrapScore = 220},
-      {ident = "unit-human-farm", producers = {"unit-peasant"}, bootstrapScore = 200},
-      {ident = "unit-human-town-hall", producers = {"unit-peasant"}, cityCenter = true, bootstrapScore = 240},
-      {ident = "unit-human-barracks", producers = {"unit-peasant"}, bootstrapScore = 180},
-      {ident = "unit-human-lumber-mill", producers = {"unit-peasant"}, bootstrapScore = 170},
-      {ident = "unit-human-blacksmith", producers = {"unit-peasant"}, bootstrapScore = 160},
-      {ident = "unit-human-church", producers = {"unit-peasant"}, bootstrapScore = 150},
-      {ident = "unit-human-stable", producers = {"unit-peasant"}, bootstrapScore = 150},
-      {ident = "unit-human-tower", producers = {"unit-peasant"}, bootstrapScore = 150},
-      {ident = "unit-wall", producers = HUMAN_CITY_CENTERS, bootstrapScore = 60}
+      {ident = "unit-road", producers = HUMAN_CITY_CENTERS, road = true, maxCount = 12, bootstrapScore = 220},
+      {ident = "unit-human-farm", producers = {"unit-peasant"}, demandDriven = true, maxCount = 12, bootstrapScore = 200},
+      {ident = "unit-human-town-hall", producers = {"unit-peasant"}, cityCenter = true, maxCount = 3, bootstrapScore = 240},
+      {ident = "unit-human-barracks", producers = {"unit-peasant"}, baseLimit = 1, workersPerAdditional = 12, maxCount = 3, bootstrapScore = 180},
+      {ident = "unit-human-lumber-mill", producers = {"unit-peasant"}, maxCount = 1, bootstrapScore = 170},
+      {ident = "unit-human-blacksmith", producers = {"unit-peasant"}, maxCount = 1, bootstrapScore = 160},
+      {ident = "unit-human-church", producers = {"unit-peasant"}, baseLimit = 1, workersPerAdditional = 18, maxCount = 2, bootstrapScore = 150},
+      {ident = "unit-human-stable", producers = {"unit-peasant"}, baseLimit = 1, workersPerAdditional = 18, maxCount = 2, bootstrapScore = 150},
+      {ident = "unit-human-tower", producers = {"unit-peasant"}, baseLimit = 1, workersPerAdditional = 18, maxCount = 2, bootstrapScore = 150},
+      {ident = "unit-wall", producers = HUMAN_CITY_CENTERS, maxCount = 16, bootstrapScore = 60}
    },
    training = {
       {ident = "unit-peasant", producers = {"unit-human-town-hall", "unit-human-stormwind-keep"}, bootstrapScore = 220},
@@ -127,16 +127,16 @@ local ORC_TECH = {
    firstCityCenter = "unit-orc-first-town-hall",
    cityCenters = ORC_CITY_CENTERS,
    buildings = {
-      {ident = "unit-road", producers = ORC_CITY_CENTERS, road = true, bootstrapScore = 220},
-      {ident = "unit-orc-farm", producers = {"unit-peon"}, bootstrapScore = 200},
-      {ident = "unit-orc-town-hall", producers = {"unit-peon"}, cityCenter = true, bootstrapScore = 240},
-      {ident = "unit-orc-barracks", producers = {"unit-peon"}, bootstrapScore = 180},
-      {ident = "unit-orc-lumber-mill", producers = {"unit-peon"}, bootstrapScore = 170},
-      {ident = "unit-orc-blacksmith", producers = {"unit-peon"}, bootstrapScore = 160},
-      {ident = "unit-orc-temple", producers = {"unit-peon"}, bootstrapScore = 150},
-      {ident = "unit-orc-kennel", producers = {"unit-peon"}, bootstrapScore = 150},
-      {ident = "unit-orc-tower", producers = {"unit-peon"}, bootstrapScore = 150},
-      {ident = "unit-wall", producers = ORC_CITY_CENTERS, bootstrapScore = 60}
+      {ident = "unit-road", producers = ORC_CITY_CENTERS, road = true, maxCount = 12, bootstrapScore = 220},
+      {ident = "unit-orc-farm", producers = {"unit-peon"}, demandDriven = true, maxCount = 12, bootstrapScore = 200},
+      {ident = "unit-orc-town-hall", producers = {"unit-peon"}, cityCenter = true, maxCount = 3, bootstrapScore = 240},
+      {ident = "unit-orc-barracks", producers = {"unit-peon"}, baseLimit = 1, workersPerAdditional = 12, maxCount = 3, bootstrapScore = 180},
+      {ident = "unit-orc-lumber-mill", producers = {"unit-peon"}, maxCount = 1, bootstrapScore = 170},
+      {ident = "unit-orc-blacksmith", producers = {"unit-peon"}, maxCount = 1, bootstrapScore = 160},
+      {ident = "unit-orc-temple", producers = {"unit-peon"}, baseLimit = 1, workersPerAdditional = 18, maxCount = 2, bootstrapScore = 150},
+      {ident = "unit-orc-kennel", producers = {"unit-peon"}, baseLimit = 1, workersPerAdditional = 18, maxCount = 2, bootstrapScore = 150},
+      {ident = "unit-orc-tower", producers = {"unit-peon"}, baseLimit = 1, workersPerAdditional = 18, maxCount = 2, bootstrapScore = 150},
+      {ident = "unit-wall", producers = ORC_CITY_CENTERS, maxCount = 16, bootstrapScore = 60}
    },
    training = {
       {ident = "unit-peon", producers = {"unit-orc-town-hall", "unit-orc-blackrock-spire"}, bootstrapScore = 220},
@@ -176,7 +176,7 @@ local ORC_TECH = {
 
 if preferences.RebalancedStats then
    table.insert(HUMAN_TECH.buildings, {ident = "unit-human-first-town-hall", producers = {"unit-peasant"}, initialCityCenter = true, bootstrapScore = 260})
-   table.insert(HUMAN_TECH.buildings, {ident = "unit-human-guard-tower", producers = {"unit-peasant"}, bootstrapScore = 130})
+   table.insert(HUMAN_TECH.buildings, {ident = "unit-human-guard-tower", producers = {"unit-peasant"}, maxCount = 4, bootstrapScore = 130})
    table.insert(HUMAN_TECH.training, {ident = "unit-sorceress", producers = {"unit-human-church"}, bootstrapScore = 170})
    for _, specification in ipairs({
       {ident = "upgrade-human-barding1", producers = {"unit-human-stable"}},
@@ -196,7 +196,7 @@ if preferences.RebalancedStats then
    table.insert(HUMAN_TECH.spells, {ident = "spell-freeze", casters = {"unit-sorceress"}, upgrade = "upgrade-freeze", mana = 35})
 
    table.insert(ORC_TECH.buildings, {ident = "unit-orc-first-town-hall", producers = {"unit-peon"}, initialCityCenter = true, bootstrapScore = 260})
-   table.insert(ORC_TECH.buildings, {ident = "unit-orc-watch-tower", producers = {"unit-peon"}, bootstrapScore = 130})
+   table.insert(ORC_TECH.buildings, {ident = "unit-orc-watch-tower", producers = {"unit-peon"}, maxCount = 4, bootstrapScore = 130})
    for _, specification in ipairs({
       {ident = "upgrade-orc-saliva1", producers = {"unit-orc-kennel"}},
       {ident = "upgrade-orc-saliva2", producers = {"unit-orc-kennel"}},
@@ -537,6 +537,7 @@ local function NewWorldSnapshot(playerIndex)
       height = Number(Map.Info.MapHeight),
       own = {},
       ownByIdent = {},
+      ownTypeCounts = {},
       ownMobile = {},
       workers = {},
       cityCenters = {},
@@ -554,54 +555,53 @@ local function NewWorldSnapshot(playerIndex)
    for _, slot in ipairs(GetUnits("any")) do
       local unit = ReadUnit(slot)
       if unit ~= nil then
-         local relation = nil
-         if unit.owner == playerIndex then
-            relation = RELATION_OWN
-         elseif IsEnemy(playerIndex, unit.owner) then
-            relation = RELATION_ENEMY
-         elseif unit.resourceKind ~= RESOURCE_NONE or unit.role == "road" then
-            relation = RELATION_NEUTRAL
-         end
+         if unit.role == "road" then
+            table.insert(world.roads, unit)
+         else
+            local relation = nil
+            if unit.owner == playerIndex then
+               relation = RELATION_OWN
+            elseif IsEnemy(playerIndex, unit.owner) then
+               relation = RELATION_ENEMY
+            elseif unit.resourceKind ~= RESOURCE_NONE then
+               relation = RELATION_NEUTRAL
+            end
 
-         if relation ~= nil then
-            unit.relation = relation
-            table.insert(world.entities, unit)
-            if relation == RELATION_OWN then
-               table.insert(world.own, unit)
-               if world.ownByIdent[unit.ident] == nil then
-                  world.ownByIdent[unit.ident] = {}
-               end
-               table.insert(world.ownByIdent[unit.ident], unit)
-               if unit.role ~= nil then
-                  world.roleCounts[unit.role] = (world.roleCounts[unit.role] or 0) + 1
-               end
-               if unit.building then
-                  table.insert(world.ownBuildings, unit)
-               else
-                  table.insert(world.ownMobile, unit)
-                  if unit.canAttack then
-                     table.insert(world.attackers, unit)
+            if relation ~= nil then
+               unit.relation = relation
+               table.insert(world.entities, unit)
+               if relation == RELATION_OWN then
+                  table.insert(world.own, unit)
+                  if world.ownByIdent[unit.ident] == nil then
+                     world.ownByIdent[unit.ident] = {}
                   end
-               end
-               if unit.role == "worker" then
-                  table.insert(world.workers, unit)
-               elseif unit.role == "cityCenter" then
-                  table.insert(world.cityCenters, unit)
-               elseif unit.role == "road" then
-                  table.insert(world.roads, unit)
-               end
-            elseif relation == RELATION_ENEMY then
-               table.insert(world.enemy, unit)
-               if not unit.wall then
+                  table.insert(world.ownByIdent[unit.ident], unit)
+                  world.ownTypeCounts[unit.ident] = (world.ownTypeCounts[unit.ident] or 0) + 1
+                  if unit.role ~= nil then
+                     world.roleCounts[unit.role] = (world.roleCounts[unit.role] or 0) + 1
+                  end
                   if unit.building then
-                     table.insert(world.enemyBuildings, unit)
+                     table.insert(world.ownBuildings, unit)
                   else
-                     table.insert(world.enemyUnits, unit)
+                     table.insert(world.ownMobile, unit)
+                     if unit.canAttack then
+                        table.insert(world.attackers, unit)
+                     end
                   end
-               end
-            else
-               if unit.role == "road" then
-                  table.insert(world.roads, unit)
+                  if unit.role == "worker" then
+                     table.insert(world.workers, unit)
+                  elseif unit.role == "cityCenter" then
+                     table.insert(world.cityCenters, unit)
+                  end
+               elseif relation == RELATION_ENEMY then
+                  table.insert(world.enemy, unit)
+                  if not unit.wall then
+                     if unit.building then
+                        table.insert(world.enemyBuildings, unit)
+                     else
+                        table.insert(world.enemyUnits, unit)
+                     end
+                  end
                else
                   table.insert(world.resources, unit)
                end
@@ -934,6 +934,14 @@ local function ClosestUnit(origin, units)
 end
 
 
+local function BuildingCount(world, specification)
+   if specification.road then
+      return #world.roads
+   end
+   return world.ownTypeCounts[specification.ident] or 0
+end
+
+
 local function BuildSpecificationEnabled(world, specification)
    if specification.initialCityCenter then
       return preferences.RebalancedStats and #world.cityCenters == 0
@@ -942,9 +950,19 @@ local function BuildSpecificationEnabled(world, specification)
       if #world.cityCenters == 0 then
          return not preferences.RebalancedStats
       end
-      return preferences.AllowMultipleTownHalls == true
+      return preferences.AllowMultipleTownHalls == true and #world.cityCenters < specification.maxCount
    end
-   return true
+   if specification.demandDriven and world.demand < world.supply then
+      return false
+   end
+   local limit = specification.maxCount
+   if specification.workersPerAdditional ~= nil then
+      limit = math.min(
+         limit,
+         specification.baseLimit + math.floor(#world.workers / specification.workersPerAdditional)
+      )
+   end
+   return limit == nil or BuildingCount(world, specification) < limit
 end
 
 local function AddBuildCandidates(world, tech, append)
