@@ -41,6 +41,7 @@ local KIND_EXPLORE = 8
 local KIND_REPAIR = 9
 local KIND_FORMATION = 10
 local KIND_DEFEND = 11
+local KIND_CAST_SPELL = 12
 
 local RELATION_OWN = 0
 local RELATION_ENEMY = 1
@@ -55,37 +56,160 @@ local FORMATION_LINE = 1
 local FORMATION_BOX = 2
 local FORMATION_SPREAD = 3
 
-local HUMAN_UNITS = {
-   worker = "unit-peasant",
-   cityCenter = "unit-human-town-hall",
-   farm = "unit-human-farm",
-   barracks = "unit-human-barracks",
-   lumberMill = "unit-human-lumber-mill",
-   blacksmith = "unit-human-blacksmith",
-   stables = "unit-human-stable",
-   soldier = "unit-footman",
-   shooter = "unit-archer",
-   cavalry = "unit-knight",
-   catapult = "unit-human-catapult",
-   weaponUpgrade = "upgrade-sword1",
-   armorUpgrade = "upgrade-human-shield1"
+local HUMAN_CITY_CENTERS = {
+   "unit-human-town-hall",
+   "unit-human-first-town-hall",
+   "unit-human-stormwind-keep"
 }
 
-local ORC_UNITS = {
+local ORC_CITY_CENTERS = {
+   "unit-orc-town-hall",
+   "unit-orc-first-town-hall",
+   "unit-orc-blackrock-spire"
+}
+
+local HUMAN_TECH = {
+   worker = "unit-peasant",
+   cityCenter = "unit-human-town-hall",
+   firstCityCenter = "unit-human-first-town-hall",
+   cityCenters = HUMAN_CITY_CENTERS,
+   buildings = {
+      {ident = "unit-road", producers = HUMAN_CITY_CENTERS, road = true, bootstrapScore = 220},
+      {ident = "unit-human-farm", producers = {"unit-peasant"}, bootstrapScore = 200},
+      {ident = "unit-human-town-hall", producers = {"unit-peasant"}, cityCenter = true, bootstrapScore = 240},
+      {ident = "unit-human-barracks", producers = {"unit-peasant"}, bootstrapScore = 180},
+      {ident = "unit-human-lumber-mill", producers = {"unit-peasant"}, bootstrapScore = 170},
+      {ident = "unit-human-blacksmith", producers = {"unit-peasant"}, bootstrapScore = 160},
+      {ident = "unit-human-church", producers = {"unit-peasant"}, bootstrapScore = 150},
+      {ident = "unit-human-stable", producers = {"unit-peasant"}, bootstrapScore = 150},
+      {ident = "unit-human-tower", producers = {"unit-peasant"}, bootstrapScore = 150},
+      {ident = "unit-wall", producers = HUMAN_CITY_CENTERS, bootstrapScore = 60}
+   },
+   training = {
+      {ident = "unit-peasant", producers = {"unit-human-town-hall", "unit-human-stormwind-keep"}, bootstrapScore = 220},
+      {ident = "unit-footman", producers = {"unit-human-barracks"}, bootstrapScore = 180},
+      {ident = "unit-archer", producers = {"unit-human-barracks"}, bootstrapScore = 180},
+      {ident = "unit-human-catapult", producers = {"unit-human-barracks"}, bootstrapScore = 180},
+      {ident = "unit-knight", producers = {"unit-human-barracks"}, bootstrapScore = 180},
+      {ident = "unit-cleric", producers = {"unit-human-church"}, bootstrapScore = 170},
+      {ident = "unit-conjurer", producers = {"unit-human-tower"}, bootstrapScore = 170}
+   },
+   research = {
+      {ident = "upgrade-sword1", producers = {"unit-human-blacksmith"}},
+      {ident = "upgrade-sword2", producers = {"unit-human-blacksmith"}},
+      {ident = "upgrade-human-shield1", producers = {"unit-human-blacksmith"}},
+      {ident = "upgrade-human-shield2", producers = {"unit-human-blacksmith"}},
+      {ident = "upgrade-arrow1", producers = {"unit-human-lumber-mill"}},
+      {ident = "upgrade-arrow2", producers = {"unit-human-lumber-mill"}},
+      {ident = "upgrade-horse1", producers = {"unit-human-stable"}},
+      {ident = "upgrade-horse2", producers = {"unit-human-stable"}},
+      {ident = "upgrade-healing", producers = {"unit-human-church"}},
+      {ident = "upgrade-far-seeing", producers = {"unit-human-church"}},
+      {ident = "upgrade-invisibility", producers = {"unit-human-church"}},
+      {ident = "upgrade-scorpion", producers = {"unit-human-tower"}},
+      {ident = "upgrade-rain-of-fire", producers = {"unit-human-tower"}},
+      {ident = "upgrade-water-elemental", producers = {"unit-human-tower"}}
+   },
+   spells = {
+      {ident = "spell-healing", casters = {"unit-cleric"}, upgrade = "upgrade-healing", mana = 2},
+      {ident = "spell-far-seeing", casters = {"unit-cleric"}, upgrade = "upgrade-far-seeing", mana = 35},
+      {ident = "spell-invisibility", casters = {"unit-cleric"}, upgrade = "upgrade-invisibility", mana = 40},
+      {ident = "spell-summon-scorpions", casters = {"unit-conjurer"}, upgrade = "upgrade-scorpion", mana = 30},
+      {ident = "spell-rain-of-fire", casters = {"unit-conjurer"}, upgrade = "upgrade-rain-of-fire", mana = 20},
+      {ident = "spell-summon-elemental", casters = {"unit-conjurer"}, upgrade = "upgrade-water-elemental", mana = 60},
+      {ident = "spell-poison", casters = {"unit-scorpion"}, mana = 0}
+   }
+}
+
+local ORC_TECH = {
    worker = "unit-peon",
    cityCenter = "unit-orc-town-hall",
-   farm = "unit-orc-farm",
-   barracks = "unit-orc-barracks",
-   lumberMill = "unit-orc-lumber-mill",
-   blacksmith = "unit-orc-blacksmith",
-   stables = "unit-orc-kennel",
-   soldier = "unit-grunt",
-   shooter = "unit-spearman",
-   cavalry = "unit-raider",
-   catapult = "unit-orc-catapult",
-   weaponUpgrade = "upgrade-axe1",
-   armorUpgrade = "upgrade-orc-shield1"
+   firstCityCenter = "unit-orc-first-town-hall",
+   cityCenters = ORC_CITY_CENTERS,
+   buildings = {
+      {ident = "unit-road", producers = ORC_CITY_CENTERS, road = true, bootstrapScore = 220},
+      {ident = "unit-orc-farm", producers = {"unit-peon"}, bootstrapScore = 200},
+      {ident = "unit-orc-town-hall", producers = {"unit-peon"}, cityCenter = true, bootstrapScore = 240},
+      {ident = "unit-orc-barracks", producers = {"unit-peon"}, bootstrapScore = 180},
+      {ident = "unit-orc-lumber-mill", producers = {"unit-peon"}, bootstrapScore = 170},
+      {ident = "unit-orc-blacksmith", producers = {"unit-peon"}, bootstrapScore = 160},
+      {ident = "unit-orc-temple", producers = {"unit-peon"}, bootstrapScore = 150},
+      {ident = "unit-orc-kennel", producers = {"unit-peon"}, bootstrapScore = 150},
+      {ident = "unit-orc-tower", producers = {"unit-peon"}, bootstrapScore = 150},
+      {ident = "unit-wall", producers = ORC_CITY_CENTERS, bootstrapScore = 60}
+   },
+   training = {
+      {ident = "unit-peon", producers = {"unit-orc-town-hall", "unit-orc-blackrock-spire"}, bootstrapScore = 220},
+      {ident = "unit-grunt", producers = {"unit-orc-barracks"}, bootstrapScore = 180},
+      {ident = "unit-spearman", producers = {"unit-orc-barracks"}, bootstrapScore = 180},
+      {ident = "unit-orc-catapult", producers = {"unit-orc-barracks"}, bootstrapScore = 180},
+      {ident = "unit-raider", producers = {"unit-orc-barracks"}, bootstrapScore = 180},
+      {ident = "unit-necrolyte", producers = {"unit-orc-temple"}, bootstrapScore = 170},
+      {ident = "unit-warlock", producers = {"unit-orc-tower"}, bootstrapScore = 170}
+   },
+   research = {
+      {ident = "upgrade-axe1", producers = {"unit-orc-blacksmith"}},
+      {ident = "upgrade-axe2", producers = {"unit-orc-blacksmith"}},
+      {ident = "upgrade-orc-shield1", producers = {"unit-orc-blacksmith"}},
+      {ident = "upgrade-orc-shield2", producers = {"unit-orc-blacksmith"}},
+      {ident = "upgrade-spear1", producers = {"unit-orc-lumber-mill"}},
+      {ident = "upgrade-spear2", producers = {"unit-orc-lumber-mill"}},
+      {ident = "upgrade-wolves1", producers = {"unit-orc-kennel"}},
+      {ident = "upgrade-wolves2", producers = {"unit-orc-kennel"}},
+      {ident = "upgrade-raise-dead", producers = {"unit-orc-temple"}},
+      {ident = "upgrade-dark-vision", producers = {"unit-orc-temple"}},
+      {ident = "upgrade-unholy-armor", producers = {"unit-orc-temple"}},
+      {ident = "upgrade-spider", producers = {"unit-orc-tower"}},
+      {ident = "upgrade-poison-cloud", producers = {"unit-orc-tower"}},
+      {ident = "upgrade-daemon", producers = {"unit-orc-tower"}}
+   },
+   spells = {
+      {ident = "spell-raise-dead", casters = {"unit-necrolyte"}, upgrade = "upgrade-raise-dead", mana = 25},
+      {ident = "spell-dark-vision", casters = {"unit-necrolyte"}, upgrade = "upgrade-dark-vision", mana = 35},
+      {ident = "spell-unholy-armor", casters = {"unit-necrolyte"}, upgrade = "upgrade-unholy-armor", mana = 55},
+      {ident = "spell-summon-spiders", casters = {"unit-warlock"}, upgrade = "upgrade-spider", mana = 30},
+      {ident = "spell-poison-cloud", casters = {"unit-warlock"}, upgrade = "upgrade-poison-cloud", mana = 7},
+      {ident = "spell-summon-daemon", casters = {"unit-warlock"}, upgrade = "upgrade-daemon", mana = 60},
+      {ident = "spell-slow", casters = {"unit-spider"}, mana = 0}
+   }
 }
+
+if preferences.RebalancedStats then
+   table.insert(HUMAN_TECH.buildings, {ident = "unit-human-first-town-hall", producers = {"unit-peasant"}, initialCityCenter = true, bootstrapScore = 260})
+   table.insert(HUMAN_TECH.buildings, {ident = "unit-human-guard-tower", producers = {"unit-peasant"}, bootstrapScore = 130})
+   table.insert(HUMAN_TECH.training, {ident = "unit-sorceress", producers = {"unit-human-church"}, bootstrapScore = 170})
+   for _, specification in ipairs({
+      {ident = "upgrade-human-barding1", producers = {"unit-human-stable"}},
+      {ident = "upgrade-human-barding2", producers = {"unit-human-stable"}},
+      {ident = "upgrade-human-LightArmor1", producers = {"unit-human-blacksmith"}},
+      {ident = "upgrade-human-LightArmor2", producers = {"unit-human-blacksmith"}},
+      {ident = "upgrade-human-CatapultAmmo1", producers = {"unit-human-blacksmith"}},
+      {ident = "upgrade-human-BuildingArmor1", producers = {"unit-human-lumber-mill"}},
+      {ident = "upgrade-human-BuildingArmor2", producers = {"unit-human-lumber-mill"}},
+      {ident = "upgrade-human-CatapultSpeed", producers = {"unit-human-lumber-mill"}},
+      {ident = "upgrade-hail", producers = {"unit-human-church"}},
+      {ident = "upgrade-freeze", producers = {"unit-human-tower"}}
+   }) do
+      table.insert(HUMAN_TECH.research, specification)
+   end
+   table.insert(HUMAN_TECH.spells, {ident = "spell-hail", casters = {"unit-sorceress"}, upgrade = "upgrade-hail", mana = 30})
+   table.insert(HUMAN_TECH.spells, {ident = "spell-freeze", casters = {"unit-sorceress"}, upgrade = "upgrade-freeze", mana = 35})
+
+   table.insert(ORC_TECH.buildings, {ident = "unit-orc-first-town-hall", producers = {"unit-peon"}, initialCityCenter = true, bootstrapScore = 260})
+   table.insert(ORC_TECH.buildings, {ident = "unit-orc-watch-tower", producers = {"unit-peon"}, bootstrapScore = 130})
+   for _, specification in ipairs({
+      {ident = "upgrade-orc-saliva1", producers = {"unit-orc-kennel"}},
+      {ident = "upgrade-orc-saliva2", producers = {"unit-orc-kennel"}},
+      {ident = "upgrade-orc-LightArmor1", producers = {"unit-orc-blacksmith"}},
+      {ident = "upgrade-orc-LightArmor2", producers = {"unit-orc-blacksmith"}},
+      {ident = "upgrade-orc-CatapultAmmo1", producers = {"unit-orc-blacksmith"}},
+      {ident = "upgrade-orc-BuildingArmor1", producers = {"unit-orc-lumber-mill"}},
+      {ident = "upgrade-orc-BuildingArmor2", producers = {"unit-orc-lumber-mill"}},
+      {ident = "upgrade-orc-CatapultSpeed", producers = {"unit-orc-lumber-mill"}}
+   }) do
+      table.insert(ORC_TECH.research, specification)
+   end
+end
 
 local UNIT_ROLES = {
    ["unit-peasant"] = "worker",
@@ -106,6 +230,11 @@ local UNIT_ROLES = {
    ["unit-orc-blacksmith"] = "blacksmith",
    ["unit-human-stable"] = "stables",
    ["unit-orc-kennel"] = "stables",
+   ["unit-human-church"] = "sanctuary",
+   ["unit-orc-temple"] = "sanctuary",
+   ["unit-human-tower"] = "mageTower",
+   ["unit-orc-tower"] = "mageTower",
+   ["unit-road"] = "road",
    ["unit-footman"] = "soldier",
    ["unit-grunt"] = "soldier",
    ["unit-archer"] = "shooter",
@@ -113,7 +242,12 @@ local UNIT_ROLES = {
    ["unit-knight"] = "cavalry",
    ["unit-raider"] = "cavalry",
    ["unit-human-catapult"] = "catapult",
-   ["unit-orc-catapult"] = "catapult"
+   ["unit-orc-catapult"] = "catapult",
+   ["unit-cleric"] = "supportCaster",
+   ["unit-necrolyte"] = "supportCaster",
+   ["unit-conjurer"] = "combatCaster",
+   ["unit-warlock"] = "combatCaster",
+   ["unit-sorceress"] = "combatCaster"
 }
 
 local ROLE_CODES = {
@@ -127,7 +261,12 @@ local ROLE_CODES = {
    soldier = 8,
    shooter = 9,
    cavalry = 10,
-   catapult = 11
+   catapult = 11,
+   sanctuary = 12,
+   mageTower = 13,
+   road = 14,
+   supportCaster = 15,
+   combatCaster = 16
 }
 
 local KIND_NAMES = {
@@ -142,7 +281,8 @@ local KIND_NAMES = {
    [KIND_EXPLORE] = "explore",
    [KIND_REPAIR] = "repair",
    [KIND_FORMATION] = "formation",
-   [KIND_DEFEND] = "defend"
+   [KIND_DEFEND] = "defend",
+   [KIND_CAST_SPELL] = "cast-spell"
 }
 
 local UNIT_METADATA = {}
@@ -303,6 +443,8 @@ local function TypeMetadata(ident)
          goldCost = Number(GetUnitTypeData(ident, "Costs", "gold")),
          woodCost = Number(GetUnitTypeData(ident, "Costs", "wood")),
          attackRange = Number(GetUnitTypeData(ident, "MaxAttackRange")),
+         tileWidth = Number(GetUnitTypeData(ident, "TileWidth")),
+         tileHeight = Number(GetUnitTypeData(ident, "TileHeight")),
          sightRange = 0
       }
       UNIT_METADATA[ident] = metadata
@@ -319,13 +461,17 @@ local function UnitMetadata(slot, ident)
 end
 
 local function ReadUnit(slot)
-   local hitPoints = Number(GetUnitVariable(slot, "HitPoints"))
-   if hitPoints <= 0 or not GetUnitVariable(slot, "Active") then
+   if not GetUnitVariable(slot, "Active") then
       return nil
    end
 
    local ident = GetUnitVariable(slot, "Ident")
    if ident == nil then
+      return nil
+   end
+
+   local hitPoints = Number(GetUnitVariable(slot, "HitPoints"))
+   if hitPoints <= 0 and ident ~= "unit-road" then
       return nil
    end
 
@@ -349,6 +495,7 @@ local function ReadUnit(slot)
       y = Number(GetUnitVariable(slot, "PosY")),
       hitPoints = hitPoints,
       maxHitPoints = math.max(Number(GetUnitVariable(slot, "HitPoints", "Max")), 1),
+      mana = Number(GetUnitVariable(slot, "Mana")),
       building = metadata.building,
       wall = GetUnitBoolFlag(slot, "Wall"),
       canAttack = metadata.canAttack,
@@ -389,11 +536,11 @@ local function NewWorldSnapshot(playerIndex)
       width = Number(Map.Info.MapWidth),
       height = Number(Map.Info.MapHeight),
       own = {},
+      ownByIdent = {},
       ownMobile = {},
       workers = {},
       cityCenters = {},
-      barracks = {},
-      blacksmiths = {},
+      roads = {},
       attackers = {},
       ownBuildings = {},
       enemy = {},
@@ -412,7 +559,7 @@ local function NewWorldSnapshot(playerIndex)
             relation = RELATION_OWN
          elseif IsEnemy(playerIndex, unit.owner) then
             relation = RELATION_ENEMY
-         elseif unit.resourceKind ~= RESOURCE_NONE then
+         elseif unit.resourceKind ~= RESOURCE_NONE or unit.role == "road" then
             relation = RELATION_NEUTRAL
          end
 
@@ -421,6 +568,10 @@ local function NewWorldSnapshot(playerIndex)
             table.insert(world.entities, unit)
             if relation == RELATION_OWN then
                table.insert(world.own, unit)
+               if world.ownByIdent[unit.ident] == nil then
+                  world.ownByIdent[unit.ident] = {}
+               end
+               table.insert(world.ownByIdent[unit.ident], unit)
                if unit.role ~= nil then
                   world.roleCounts[unit.role] = (world.roleCounts[unit.role] or 0) + 1
                end
@@ -436,10 +587,8 @@ local function NewWorldSnapshot(playerIndex)
                   table.insert(world.workers, unit)
                elseif unit.role == "cityCenter" then
                   table.insert(world.cityCenters, unit)
-               elseif unit.role == "barracks" then
-                  table.insert(world.barracks, unit)
-               elseif unit.role == "blacksmith" then
-                  table.insert(world.blacksmiths, unit)
+               elseif unit.role == "road" then
+                  table.insert(world.roads, unit)
                end
             elseif relation == RELATION_ENEMY then
                table.insert(world.enemy, unit)
@@ -451,7 +600,11 @@ local function NewWorldSnapshot(playerIndex)
                   end
                end
             else
-               table.insert(world.resources, unit)
+               if unit.role == "road" then
+                  table.insert(world.roads, unit)
+               else
+                  table.insert(world.resources, unit)
+               end
             end
          end
       end
@@ -465,8 +618,7 @@ local function NewWorldSnapshot(playerIndex)
    SortBySlot(world.ownMobile)
    SortBySlot(world.workers)
    SortBySlot(world.cityCenters)
-   SortBySlot(world.barracks)
-   SortBySlot(world.blacksmiths)
+   SortBySlot(world.roads)
    SortBySlot(world.attackers)
    SortBySlot(world.ownBuildings)
    SortBySlot(world.enemy)
@@ -488,8 +640,7 @@ local function NewWorldSnapshot(playerIndex)
    end
    world.commandWorkers = OnMapUnits(world, world.workers)
    world.commandCityCenters = OnMapUnits(world, world.cityCenters)
-   world.commandBarracks = OnMapUnits(world, world.barracks)
-   world.commandBlacksmiths = OnMapUnits(world, world.blacksmiths)
+   world.commandRoads = OnMapUnits(world, world.roads)
    world.commandAttackers = OnMapUnits(world, world.attackers)
    world.commandOwnBuildings = OnMapUnits(world, world.ownBuildings)
    world.commandEnemyUnits = OnMapUnits(world, world.enemyUnits)
@@ -518,8 +669,17 @@ local function IdleUnits(units)
    return idle
 end
 
-local function RoleCount(world, role)
-   return world.roleCounts[role] or 0
+local function ProducerUnits(world, identifiers)
+   local producers = {}
+   for _, ident in ipairs(identifiers) do
+      for _, unit in ipairs(world.ownByIdent[ident] or {}) do
+         if unit.idle and world.onMapSlots[unit.slot] then
+            table.insert(producers, unit)
+         end
+      end
+   end
+   SortBySlot(producers)
+   return producers
 end
 
 local function CanAfford(world, ident)
@@ -527,13 +687,25 @@ local function CanAfford(world, ident)
    return world.gold >= metadata.goldCost and world.wood >= metadata.woodCost
 end
 
+local function IsAllowed(world, ident)
+   return GetPlayerData(world.playerIndex, "Allow", ident) == "A" and
+      CheckDependency(world.playerIndex, ident)
+end
+
+local function CanProduce(world, ident)
+   return IsAllowed(world, ident) and CanAfford(world, ident)
+end
+
 local function CanResearch(world, ident)
    local metadata = UpgradeMetadata(ident)
    return metadata ~= nil and
-      GetPlayerData(world.playerIndex, "Allow", ident) == "A" and
-      CheckDependency(world.playerIndex, ident) and
+      IsAllowed(world, ident) and
       world.gold >= metadata.goldCost and
       world.wood >= metadata.woodCost
+end
+
+local function HasUpgrade(world, ident)
+   return ident == nil or GetPlayerData(world.playerIndex, "Allow", ident) == "R"
 end
 
 local function AssetValue(units)
@@ -761,154 +933,124 @@ local function ClosestUnit(origin, units)
    return result
 end
 
-local function BuildPositions(world, worker)
-   local anchor = worker
-   local nearest = ClosestUnit(worker, world.commandCityCenters)
-   if nearest ~= nil then
-      anchor = nearest.unit
+
+local function BuildSpecificationEnabled(world, specification)
+   if specification.initialCityCenter then
+      return preferences.RebalancedStats and #world.cityCenters == 0
    end
-   local offsets = {
-      {4, 0}, {-4, 0}, {0, 4}, {0, -4},
-      {6, 3}, {6, -3}, {-6, 3}, {-6, -3}
-   }
-   local positions = {}
-   for _, offset in ipairs(offsets) do
-      local x, y = ClampPosition(world, anchor.x + offset[1], anchor.y + offset[2])
-      table.insert(positions, {x = x, y = y})
+   if specification.cityCenter then
+      if #world.cityCenters == 0 then
+         return not preferences.RebalancedStats
+      end
+      return preferences.AllowMultipleTownHalls == true
    end
-   return positions
+   return true
 end
 
-local function EnsureRoads(playerIndex, world)
-   local aiState = stratagus.gameData.AIState
-   if #world.cityCenters > 0 and not aiState.war1gusRoadsGenerated[playerIndex] then
-      GenerateRoads(true, false)
-      aiState.war1gusRoadsGenerated[playerIndex] = true
-      War1gusAiLog("war1gus-ai.lifecycle", {
-         {name = "player", value = tostring(playerIndex)},
-         {name = "event", value = JsonString("roads-generated")}
-      })
-   end
-end
-
-local function AddBuildCandidates(world, units, append)
-   if type(AiCanBuildAt) ~= "function" then
-      return
-   end
-
-   local specifications = {
-      {ident = units.cityCenter, allowed = #world.cityCenters == 0},
-      {ident = units.farm, allowed = world.demand + 2 >= world.supply},
-      {ident = units.barracks, allowed = #world.cityCenters > 0},
-      {ident = units.lumberMill, allowed = RoleCount(world, "barracks") > 0},
-      {ident = units.blacksmith, allowed = RoleCount(world, "lumberMill") > 0},
-      {ident = units.stables, allowed = RoleCount(world, "blacksmith") > 0}
-   }
+local function AddBuildCandidates(world, tech, append)
    local buildCount = 0
-
-   for _, specification in ipairs(specifications) do
-      if specification.allowed and CheckDependency(world.playerIndex, specification.ident) and
-         CanAfford(world, specification.ident) then
-         local typeHash = UNIT_METADATA[specification.ident].typeHash
-         for workerIndex, worker in ipairs(IdleUnits(world.commandWorkers)) do
-            if workerIndex > 16 or buildCount >= 96 then
+   for _, specification in ipairs(tech.buildings) do
+      if BuildSpecificationEnabled(world, specification) and CanProduce(world, specification.ident) then
+         local metadata = TypeMetadata(specification.ident)
+         local producers = ProducerUnits(world, specification.producers)
+         for producerIndex, producer in ipairs(producers) do
+            if producerIndex > 16 or buildCount >= 128 then
                break
             end
-            local workerBuildCount = 0
-            for _, position in ipairs(BuildPositions(world, worker)) do
-               if workerBuildCount >= 2 or buildCount >= 96 then
-                  break
-               end
-               if AiCanBuildAt(world.playerIndex, worker.slot, specification.ident, {position.x, position.y}) then
-                  local accepted = AddDirectCandidate(
-                     append,
-                     KIND_BUILD,
-                     worker,
-                     nil,
-                     "build-at",
-                     {type = specification.ident, x = position.x, y = position.y},
-                     {
-                        auxiliaryHash = typeHash,
-                        x = position.x,
-                        y = position.y,
-                        cadence = 30,
-                        distance = math.floor(math.sqrt((worker.x - position.x) ^ 2 + (worker.y - position.y) ^ 2) + 0.5),
-                        bootstrapScore = 150
-                     }
-                  )
-                  if not accepted then
-                     return
-                  end
-                  workerBuildCount = workerBuildCount + 1
-                  buildCount = buildCount + 1
-               end
+            if not AddDirectCandidate(
+               append,
+               KIND_BUILD,
+               producer,
+               nil,
+               "build",
+               specification.ident,
+               {
+                  auxiliaryHash = metadata.typeHash,
+                  x = producer.x,
+                  y = producer.y,
+                  cadence = 30,
+                  producerCount = #producers,
+                  bootstrapScore = specification.bootstrapScore or 150
+               }
+            ) then
+               return
             end
+            buildCount = buildCount + 1
          end
       end
    end
 end
 
-local function AddMacroCandidates(world, units, append)
-   EnsureRoads(world.playerIndex, world)
-   AddBuildCandidates(world, units, append)
-   local hasSupply = world.demand < world.supply
-
-   if hasSupply and CheckDependency(world.playerIndex, units.worker) and CanAfford(world, units.worker) then
-      for producerIndex, producer in ipairs(IdleUnits(world.commandCityCenters)) do
-         if producerIndex > 24 then
-            break
-         end
-         if not AddDirectCandidate(append, KIND_TRAIN, producer, nil, "train", units.worker, {
-            auxiliaryHash = UNIT_METADATA[units.worker].typeHash,
-            cadence = 30,
-            producerCount = 1,
-            bootstrapScore = 220
-         }) then
-            return
-         end
-      end
+local function AddTrainCandidates(world, tech, append)
+   if world.demand >= world.supply then
+      return
    end
-
-   local trainSpecifications = {
-      {ident = units.soldier, allowed = hasSupply},
-      {ident = units.shooter, allowed = hasSupply and RoleCount(world, "lumberMill") > 0},
-      {ident = units.cavalry, allowed = hasSupply and RoleCount(world, "stables") > 0},
-      {ident = units.catapult, allowed = hasSupply and RoleCount(world, "blacksmith") > 0}
-   }
-   for _, specification in ipairs(trainSpecifications) do
-      if specification.allowed and CheckDependency(world.playerIndex, specification.ident) and
-         CanAfford(world, specification.ident) then
-         for producerIndex, producer in ipairs(IdleUnits(world.commandBarracks)) do
+   for _, specification in ipairs(tech.training) do
+      if CanProduce(world, specification.ident) then
+         local metadata = TypeMetadata(specification.ident)
+         local producers = ProducerUnits(world, specification.producers)
+         for producerIndex, producer in ipairs(producers) do
             if producerIndex > 24 then
                break
             end
             if not AddDirectCandidate(append, KIND_TRAIN, producer, nil, "train", specification.ident, {
-               auxiliaryHash = UNIT_METADATA[specification.ident].typeHash,
+               auxiliaryHash = metadata.typeHash,
                cadence = 30,
-               producerCount = 1,
-               bootstrapScore = 180
+               producerCount = #producers,
+               bootstrapScore = specification.bootstrapScore or 180
             }) then
                return
             end
          end
       end
    end
+end
 
-   local upgrades = {units.weaponUpgrade, units.armorUpgrade}
-   for _, upgrade in ipairs(upgrades) do
-      if CanResearch(world, upgrade) then
-         local upgradeMetadata = UpgradeMetadata(upgrade)
-         for producerIndex, producer in ipairs(IdleUnits(world.commandBlacksmiths)) do
+local function AddResearchCandidates(world, tech, append)
+   for _, specification in ipairs(tech.research) do
+      if CanResearch(world, specification.ident) then
+         local metadata = UpgradeMetadata(specification.ident)
+         local producers = ProducerUnits(world, specification.producers)
+         for producerIndex, producer in ipairs(producers) do
             if producerIndex > 16 then
                break
             end
-            if not AddDirectCandidate(append, KIND_RESEARCH, producer, nil, "research", upgrade, {
-               auxiliaryHash = upgradeMetadata.typeHash,
+            if not AddDirectCandidate(append, KIND_RESEARCH, producer, nil, "research", specification.ident, {
+               auxiliaryHash = metadata.typeHash,
                cadence = 30,
-               producerCount = 1,
+               producerCount = #producers,
                bootstrapScore = 90
             }) then
                return
+            end
+         end
+      end
+   end
+end
+
+local function AddMacroCandidates(world, tech, append)
+   AddBuildCandidates(world, tech, append)
+   AddTrainCandidates(world, tech, append)
+   AddResearchCandidates(world, tech, append)
+end
+
+local function AddSpellCandidates(world, tech, append)
+   for _, specification in ipairs(tech.spells) do
+      if HasUpgrade(world, specification.upgrade) then
+         local casters = ProducerUnits(world, specification.casters)
+         for casterIndex, caster in ipairs(casters) do
+            if casterIndex > 32 then
+               break
+            end
+            if caster.mana >= specification.mana then
+               if not AddDirectCandidate(append, KIND_CAST_SPELL, caster, nil, "cast-auto", specification.ident, {
+                  auxiliaryHash = StableHash32(specification.ident),
+                  cadence = 5,
+                  producerCount = #casters,
+                  bootstrapScore = 130
+               }) then
+                  return
+               end
             end
          end
       end
@@ -1151,9 +1293,9 @@ end
 local function RaceState(playerIndex)
    local race = GetPlayerData(playerIndex, "RaceName")
    if race == race1 then
-      return 0, HUMAN_UNITS
+      return 0, HUMAN_TECH
    end
-   return 1, ORC_UNITS
+   return 1, ORC_TECH
 end
 
 local function PlayerTotals(playerIndex, name, resource)
@@ -1174,7 +1316,7 @@ local function ShouldEmitMacro(playerIndex)
 end
 
 local function BuildObservation(playerIndex, world, includeCandidates, terminal)
-   local raceId, units = RaceState(playerIndex)
+   local raceId, tech = RaceState(playerIndex)
    local components, ownAsset, enemyAsset = RewardComponents(playerIndex, world, terminal)
    local records = {}
    local plans = {}
@@ -1183,10 +1325,11 @@ local function BuildObservation(playerIndex, world, includeCandidates, terminal)
       local append
       records, plans, append = CandidateSet()
       if ShouldEmitMacro(playerIndex) then
-         AddMacroCandidates(world, units, append)
+         AddMacroCandidates(world, tech, append)
          AddGatherCandidates(world, append)
       end
       AddMicroCandidates(world, append)
+      AddSpellCandidates(world, tech, append)
    end
 
    local state = {

@@ -1,0 +1,34 @@
+-- Stratagus Map Setup
+-- Wraps the extracted forest1 runtime map without vendoring generated data.
+-- File licensed under the GNU GPL version 2.
+
+Load("maps/forest1.sms")
+
+-- Keep the first two inherited starting forces as War1gus AI players. Remove
+-- the other inherited forces so slot 2 is a unitless human observer and no
+-- undeclared fourth player remains in the match.
+SetAiType(0, "war1gus-ai")
+SetAiType(1, "war1gus-ai")
+for _, playerIndex in ipairs({2, 3}) do
+   for _, unit in ipairs(GetUnits(playerIndex)) do
+      RemoveUnit(unit)
+   end
+end
+SetStartView(2, 32, 32)
+SetPlayerData(2, "Resources", "wood", 1000)
+SetPlayerData(2, "Resources", "gold", 1000)
+SetPlayerData(2, "Resources", "lumber", 0)
+SetPlayerData(2, "RaceName", "human")
+
+-- The two AI seats fight each other and remain neutral toward the observer.
+AddTrigger(function() return GameCycle > 0 end, function()
+   SetDiplomacy(0, "enemy", 1)
+   SetDiplomacy(1, "enemy", 0)
+   SetDiplomacy(0, "neutral", 2)
+   SetDiplomacy(2, "neutral", 0)
+   SetDiplomacy(1, "neutral", 2)
+   SetDiplomacy(2, "neutral", 1)
+   RevealMap("explored")
+   SetFogOfWar(false)
+   return false
+end)

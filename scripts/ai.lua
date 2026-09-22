@@ -580,9 +580,6 @@ local function CreateAiGameData()
    if aiState.loop_index == nil then
       aiState.loop_index = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
    end
-   if aiState.war1gusRoadsGenerated == nil then
-      aiState.war1gusRoadsGenerated = {}
-   end
    if aiState.war1gusLastMacroCycle == nil then
       aiState.war1gusLastMacroCycle = {}
    end

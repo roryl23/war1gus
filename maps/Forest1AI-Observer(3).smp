@@ -1,0 +1,6 @@
+-- Stratagus Map Presentation
+-- Based on the extracted forest1 runtime map.
+-- File licensed under the GNU GPL version 2.
+
+DefinePlayerTypes("computer", "computer", "person")
+PresentMap("Forest AI 1v1 (Observer)", 3, 64, 64, 1)
