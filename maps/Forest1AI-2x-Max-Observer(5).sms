@@ -1,0 +1,94 @@
+-- Stratagus Map Setup
+-- Scales the extracted forest1 runtime map to twice its original size without
+-- vendoring generated data. Each source tile becomes a 2x2 block, preserving
+-- the proportions of forest and open terrain.
+-- File licensed under the GNU GPL version 2.
+
+local ForestScale = 2
+local ForestOriginalSetTile = SetTile
+local ForestOriginalCreateUnit = CreateUnit
+local ForestGoldMines = {}
+
+-- Scale terrain and unit positions while the extracted source map is loaded.
+SetTile = function(tile, x, y, value, elevation)
+   for offsetY = 0, ForestScale - 1 do
+      for offsetX = 0, ForestScale - 1 do
+         ForestOriginalSetTile(
+            tile,
+            x * ForestScale + offsetX,
+            y * ForestScale + offsetY,
+            value,
+            elevation or 0
+         )
+      end
+   end
+end
+
+CreateUnit = function(unitType, player, position)
+   local unit = ForestOriginalCreateUnit(
+      unitType,
+      player,
+      {position[1] * ForestScale, position[2] * ForestScale}
+   )
+   if unitType == "unit-gold-mine" then
+      ForestGoldMines[#ForestGoldMines + 1] = unit
+   end
+   return unit
+end
+
+Load("maps/forest1.sms")
+
+SetTile = ForestOriginalSetTile
+CreateUnit = ForestOriginalCreateUnit
+ForestOriginalSetTile = nil
+ForestOriginalCreateUnit = nil
+
+-- Preserve the inherited four starting forces as War1gus AI players.
+SetStartView(0, 32, 32)
+SetStartView(1, 96, 96)
+SetStartView(2, 32, 96)
+SetStartView(3, 96, 32)
+SetAiType(0, "war1gus-ai")
+SetAiType(1, "war1gus-ai")
+SetAiType(2, "war1gus-ai")
+SetAiType(3, "war1gus-ai")
+
+-- Give every inherited gold mine the established maximum map amount.
+for _, goldMine in ipairs(ForestGoldMines) do
+   SetResourcesHeld(goldMine, 100000)
+end
+ForestGoldMines = nil
+
+-- Configure a unitless human observer at the center of the enlarged map.
+SetStartView(4, 64, 64)
+SetPlayerData(4, "Resources", "wood", 1000)
+SetPlayerData(4, "Resources", "gold", 1000)
+SetPlayerData(4, "Resources", "lumber", 0)
+SetPlayerData(4, "RaceName", "human")
+
+-- Make the four AI players fight while preserving the human observer.
+AddTrigger(function() return GameCycle > 0 end, function()
+   SetDiplomacy(0, "enemy", 1)
+   SetDiplomacy(1, "enemy", 0)
+   SetDiplomacy(0, "enemy", 2)
+   SetDiplomacy(2, "enemy", 0)
+   SetDiplomacy(0, "enemy", 3)
+   SetDiplomacy(3, "enemy", 0)
+   SetDiplomacy(1, "enemy", 2)
+   SetDiplomacy(2, "enemy", 1)
+   SetDiplomacy(1, "enemy", 3)
+   SetDiplomacy(3, "enemy", 1)
+   SetDiplomacy(2, "enemy", 3)
+   SetDiplomacy(3, "enemy", 2)
+   SetDiplomacy(0, "neutral", 4)
+   SetDiplomacy(4, "neutral", 0)
+   SetDiplomacy(1, "neutral", 4)
+   SetDiplomacy(4, "neutral", 1)
+   SetDiplomacy(2, "neutral", 4)
+   SetDiplomacy(4, "neutral", 2)
+   SetDiplomacy(3, "neutral", 4)
+   SetDiplomacy(4, "neutral", 3)
+   RevealMap("explored")
+   SetFogOfWar(false)
+   return false
+end)
