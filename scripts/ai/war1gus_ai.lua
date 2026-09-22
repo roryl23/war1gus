@@ -112,7 +112,7 @@ local HUMAN_TECH = {
    },
    spells = {
       {ident = "spell-healing", casters = {"unit-cleric"}, upgrade = "upgrade-healing", mana = 2},
-      {ident = "spell-far-seeing", casters = {"unit-cleric"}, upgrade = "upgrade-far-seeing", mana = 35},
+      {ident = "spell-far-seeing", casters = {"unit-cleric"}, upgrade = "upgrade-far-seeing", mana = 35, target = "position"},
       {ident = "spell-invisibility", casters = {"unit-cleric"}, upgrade = "upgrade-invisibility", mana = 40},
       {ident = "spell-summon-scorpions", casters = {"unit-conjurer"}, upgrade = "upgrade-scorpion", mana = 30},
       {ident = "spell-rain-of-fire", casters = {"unit-conjurer"}, upgrade = "upgrade-rain-of-fire", mana = 20},
@@ -165,7 +165,7 @@ local ORC_TECH = {
    },
    spells = {
       {ident = "spell-raise-dead", casters = {"unit-necrolyte"}, upgrade = "upgrade-raise-dead", mana = 25},
-      {ident = "spell-dark-vision", casters = {"unit-necrolyte"}, upgrade = "upgrade-dark-vision", mana = 35},
+      {ident = "spell-dark-vision", casters = {"unit-necrolyte"}, upgrade = "upgrade-dark-vision", mana = 35, target = "position"},
       {ident = "spell-unholy-armor", casters = {"unit-necrolyte"}, upgrade = "upgrade-unholy-armor", mana = 55},
       {ident = "spell-summon-spiders", casters = {"unit-warlock"}, upgrade = "upgrade-spider", mana = 30},
       {ident = "spell-poison-cloud", casters = {"unit-warlock"}, upgrade = "upgrade-poison-cloud", mana = 7},
@@ -1033,22 +1033,79 @@ local function AddMacroCandidates(world, tech, append)
    AddTrainCandidates(world, tech, append)
    AddResearchCandidates(world, tech, append)
 end
+local function StrategicSpellPositions(world)
+   local maxX = math.max(world.width - 1, 0)
+   local maxY = math.max(world.height - 1, 0)
+   local xCoordinates = {
+      math.floor(maxX / 4),
+      math.floor(maxX / 2),
+      math.floor(3 * maxX / 4)
+   }
+   local yCoordinates = {
+      math.floor(maxY / 4),
+      math.floor(maxY / 2),
+      math.floor(3 * maxY / 4)
+   }
+   local positions = {}
+   local seen = {}
+   for _, y in ipairs(yCoordinates) do
+      for _, x in ipairs(xCoordinates) do
+         local key = x .. ":" .. y
+         if not seen[key] then
+            seen[key] = true
+            table.insert(positions, {x = x, y = y})
+         end
+      end
+   end
+   return positions
+end
+
 
 local function AddSpellCandidates(world, tech, append)
    for _, specification in ipairs(tech.spells) do
       if HasUpgrade(world, specification.upgrade) then
          local casters = ProducerUnits(world, specification.casters)
+         local positions = specification.target == "position" and StrategicSpellPositions(world) or nil
          for casterIndex, caster in ipairs(casters) do
             if casterIndex > 32 then
                break
             end
             if caster.mana >= specification.mana then
-               if not AddDirectCandidate(append, KIND_CAST_SPELL, caster, nil, "cast-auto", specification.ident, {
-                  auxiliaryHash = StableHash32(specification.ident),
-                  cadence = 5,
-                  producerCount = #casters,
-                  bootstrapScore = 130
-               }) then
+               if positions ~= nil then
+                  for _, position in ipairs(positions) do
+                     if not AddDirectCandidate(
+                        append,
+                        KIND_CAST_SPELL,
+                        caster,
+                        nil,
+                        "cast-position",
+                        {spell = specification.ident, x = position.x, y = position.y},
+                        {
+                           auxiliaryHash = StableHash32(specification.ident),
+                           x = position.x,
+                           y = position.y,
+                           cadence = 5,
+                           producerCount = #casters,
+                           bootstrapScore = 110
+                        }
+                     ) then
+                        return
+                     end
+                  end
+               elseif not AddDirectCandidate(
+                  append,
+                  KIND_CAST_SPELL,
+                  caster,
+                  nil,
+                  "cast-auto",
+                  specification.ident,
+                  {
+                     auxiliaryHash = StableHash32(specification.ident),
+                     cadence = 5,
+                     producerCount = #casters,
+                     bootstrapScore = 130
+                  }
+               ) then
                   return
                end
             end
