@@ -487,12 +487,14 @@ local function ReadUnit(slot)
       sightRange = metadata.sightRange
    end
 
+   local role = UNIT_ROLES[ident]
    return {
       slot = slot,
       owner = Number(GetUnitVariable(slot, "Player")),
       ident = ident,
-      role = UNIT_ROLES[ident],
+      role = role,
       idle = GetUnitVariable(slot, "Idle"),
+      gathering = role == "worker" and GetUnitVariable(slot, "Gathering") or false,
       x = Number(GetUnitVariable(slot, "PosX")),
       y = Number(GetUnitVariable(slot, "PosY")),
       hitPoints = hitPoints,
@@ -671,11 +673,12 @@ local function IdleUnits(units)
    return idle
 end
 
-local function ProducerUnits(world, identifiers)
+local function ProducerUnits(world, identifiers, includeGatheringWorkers)
    local producers = {}
    for _, ident in ipairs(identifiers) do
       for _, unit in ipairs(world.ownByIdent[ident] or {}) do
-         if unit.idle and world.onMapSlots[unit.slot] then
+         if (unit.idle or (includeGatheringWorkers and unit.role == "worker" and unit.gathering))
+            and world.onMapSlots[unit.slot] then
             table.insert(producers, unit)
          end
       end
@@ -973,7 +976,7 @@ local function AddBuildCandidates(world, tech, append)
    for _, specification in ipairs(tech.buildings) do
       if BuildSpecificationEnabled(world, specification) and CanProduce(world, specification.ident) then
          local metadata = TypeMetadata(specification.ident)
-         local producers = ProducerUnits(world, specification.producers)
+         local producers = ProducerUnits(world, specification.producers, true)
          for producerIndex, producer in ipairs(producers) do
             if producerIndex > 16 or buildCount >= 128 then
                break
@@ -1598,7 +1601,8 @@ local function PlanCommands(playerIndex, plan, world)
       local _, tech = RaceState(playerIndex)
       if verb == "build" then
          local specification = producerValid(actor, tech.buildings, argument, "producers")
-         return actor.idle and specification ~= nil and
+         return (actor.idle or (actor.role == "worker" and actor.gathering)) and
+            specification ~= nil and
             BuildSpecificationEnabled(world, specification) and CanProduce(world, argument)
       elseif verb == "train" then
          return actor.idle and world.demand < world.supply and
