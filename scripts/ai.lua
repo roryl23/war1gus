@@ -584,9 +584,6 @@ local function CreateAiGameData()
    if aiState.loop_index == nil then
       aiState.loop_index = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
    end
-   if aiState.war1gusLastMacroCycle == nil then
-      aiState.war1gusLastMacroCycle = {}
-   end
    if aiState.war1gusRewardBookkeeping == nil then
       aiState.war1gusRewardBookkeeping = {}
    end
@@ -608,6 +605,15 @@ local function War1gusAiTerminalState(state)
    return terminalState
 end
 
+local function ClearWar1gusSelectionState()
+   local aiState = stratagus.gameData.AIState
+   if aiState ~= nil then
+      aiState.war1gusSelectionStages = nil
+      aiState.war1gusDeferredReward = nil
+      aiState.war1gusRejectionPenalty = nil
+   end
+end
+
 local function CloseWar1gusAiServer()
    if stratagus == nil or stratagus.gameData == nil then
       return
@@ -615,6 +621,7 @@ local function CloseWar1gusAiServer()
 
    local server = stratagus.gameData.War1gusAiServer
    if server == nil then
+      ClearWar1gusSelectionState()
       return
    end
 
@@ -660,6 +667,7 @@ local function CloseWar1gusAiServer()
    server.handles = {}
    server.pending = {}
    server.states = {}
+   ClearWar1gusSelectionState()
    server.process:close()
    stratagus.gameData.War1gusAiServer = nil
 end
@@ -728,6 +736,15 @@ function EndWar1gusAiProcessor(playerIndex, reward, state)
       return false
    end
    aiState.war1gusAiEnded[playerIndex] = true
+   if aiState.war1gusSelectionStages ~= nil then
+      aiState.war1gusSelectionStages[playerIndex] = nil
+   end
+   if aiState.war1gusDeferredReward ~= nil then
+      aiState.war1gusDeferredReward[playerIndex] = nil
+   end
+   if aiState.war1gusRejectionPenalty ~= nil then
+      aiState.war1gusRejectionPenalty[playerIndex] = nil
+   end
 
    local server = stratagus.gameData.War1gusAiServer
    if server == nil then

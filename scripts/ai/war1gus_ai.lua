@@ -1,347 +1,112 @@
-local STATE_VERSION = 1
-local STATE_PLAYER = 2
-local STATE_RACE = 3
-local STATE_CYCLE = 4
-local STATE_GOLD = 5
-local STATE_WOOD = 6
-local STATE_SUPPLY = 7
-local STATE_DEMAND = 8
-local STATE_MAP_WIDTH = 9
-local STATE_MAP_HEIGHT = 10
-local STATE_ENTITY_COUNT = 11
-local STATE_CANDIDATE_COUNT = 12
-local STATE_OWN_ASSET = 13
-local STATE_ENEMY_ASSET = 14
-local STATE_TOTAL_GOLD = 15
-local STATE_TOTAL_WOOD = 16
-local STATE_TOTAL_KILLS = 17
-local STATE_TOTAL_RAZINGS = 18
 local STATE_REWARD_ENEMY_PROGRESS = 19
 local STATE_REWARD_OWN_LOSS = 20
 local STATE_REWARD_TIME = 21
 local STATE_REWARD_TERMINAL = 22
 
-local ENTITY_WORDS = 14
-local CANDIDATE_WORDS = 12
-local MAX_CANDIDATES = 512
-local MAX_BATCH_COMMANDS = 32
-local MAX_ASYNC_RESPONSE_AGE = 499
 local UINT32_MODULUS = 4294967296
 local INT32_SIGN = 2147483648
-
-
+local MAX_ASYNC_RESPONSE_AGE = 499
+local MAX_PAGE_CHOICES = 509 -- wait plus up to two navigation choices
+local MAX_STATE_WORDS = 1048576 -- shared v3 frame cap with engine and server
+local REJECTION_REWARD = -5
 local VERBOSE_LOGGING = os.getenv("WAR1GUS_AI_VERBOSE_LOG") == "1"
+
 local KIND_WAIT = 0
-local KIND_GATHER_GOLD = 1
-local KIND_GATHER_WOOD = 2
-local KIND_BUILD = 3
-local KIND_TRAIN = 4
-local KIND_RESEARCH = 5
-local KIND_ATTACK_ENTITY = 6
-local KIND_MOVE_GROUP = 7
-local KIND_EXPLORE = 8
-local KIND_REPAIR = 9
-local KIND_FORMATION = 10
-local KIND_DEFEND = 11
-local KIND_CAST_SPELL = 12
+local KIND_ACTOR = 13
+local KIND_ACTION = 14
+local KIND_ENTITY = 15
+local KIND_X = 16
+local KIND_Y = 17
+local KIND_PAGE = 18
 
 local RELATION_OWN = 0
 local RELATION_ENEMY = 1
 local RELATION_NEUTRAL = 2
-
 local RESOURCE_NONE = 0
 local RESOURCE_GOLD = 1
 local RESOURCE_WOOD = 2
 
-local FORMATION_NONE = 0
-local FORMATION_LINE = 1
-local FORMATION_BOX = 2
-local FORMATION_SPREAD = 3
-
-local HUMAN_CITY_CENTERS = {
-   "unit-human-town-hall",
-   "unit-human-first-town-hall",
-   "unit-human-stormwind-keep"
-}
-
-local ORC_CITY_CENTERS = {
-   "unit-orc-town-hall",
-   "unit-orc-first-town-hall",
-   "unit-orc-blackrock-spire"
-}
-
-local HUMAN_TECH = {
-   worker = "unit-peasant",
-   cityCenter = "unit-human-town-hall",
-   firstCityCenter = "unit-human-first-town-hall",
-   cityCenters = HUMAN_CITY_CENTERS,
-   buildings = {
-      {ident = "unit-road", producers = HUMAN_CITY_CENTERS, road = true, maxCount = 12, bootstrapScore = 220},
-      {ident = "unit-human-farm", producers = {"unit-peasant"}, demandDriven = true, maxCount = 12, bootstrapScore = 200},
-      {ident = "unit-human-town-hall", producers = {"unit-peasant"}, cityCenter = true, maxCount = 3, bootstrapScore = 240},
-      {ident = "unit-human-barracks", producers = {"unit-peasant"}, baseLimit = 1, workersPerAdditional = 12, maxCount = 3, bootstrapScore = 180},
-      {ident = "unit-human-lumber-mill", producers = {"unit-peasant"}, maxCount = 1, bootstrapScore = 170},
-      {ident = "unit-human-blacksmith", producers = {"unit-peasant"}, maxCount = 1, bootstrapScore = 160},
-      {ident = "unit-human-church", producers = {"unit-peasant"}, baseLimit = 1, workersPerAdditional = 18, maxCount = 2, bootstrapScore = 150},
-      {ident = "unit-human-stable", producers = {"unit-peasant"}, baseLimit = 1, workersPerAdditional = 18, maxCount = 2, bootstrapScore = 150},
-      {ident = "unit-human-tower", producers = {"unit-peasant"}, baseLimit = 1, workersPerAdditional = 18, maxCount = 2, bootstrapScore = 150},
-      {ident = "unit-wall", producers = HUMAN_CITY_CENTERS, maxCount = 16, bootstrapScore = 60}
-   },
-   training = {
-      {ident = "unit-peasant", producers = {"unit-human-town-hall", "unit-human-stormwind-keep"}, bootstrapScore = 220},
-      {ident = "unit-footman", producers = {"unit-human-barracks"}, bootstrapScore = 180},
-      {ident = "unit-archer", producers = {"unit-human-barracks"}, bootstrapScore = 180},
-      {ident = "unit-human-catapult", producers = {"unit-human-barracks"}, bootstrapScore = 180},
-      {ident = "unit-knight", producers = {"unit-human-barracks"}, bootstrapScore = 180},
-      {ident = "unit-cleric", producers = {"unit-human-church"}, bootstrapScore = 170},
-      {ident = "unit-conjurer", producers = {"unit-human-tower"}, bootstrapScore = 170}
-   },
-   research = {
-      {ident = "upgrade-sword1", producers = {"unit-human-blacksmith"}},
-      {ident = "upgrade-sword2", producers = {"unit-human-blacksmith"}},
-      {ident = "upgrade-human-shield1", producers = {"unit-human-blacksmith"}},
-      {ident = "upgrade-human-shield2", producers = {"unit-human-blacksmith"}},
-      {ident = "upgrade-arrow1", producers = {"unit-human-lumber-mill"}},
-      {ident = "upgrade-arrow2", producers = {"unit-human-lumber-mill"}},
-      {ident = "upgrade-horse1", producers = {"unit-human-stable"}},
-      {ident = "upgrade-horse2", producers = {"unit-human-stable"}},
-      {ident = "upgrade-healing", producers = {"unit-human-church"}},
-      {ident = "upgrade-far-seeing", producers = {"unit-human-church"}},
-      {ident = "upgrade-invisibility", producers = {"unit-human-church"}},
-      {ident = "upgrade-scorpion", producers = {"unit-human-tower"}},
-      {ident = "upgrade-rain-of-fire", producers = {"unit-human-tower"}},
-      {ident = "upgrade-water-elemental", producers = {"unit-human-tower"}}
-   },
-   spells = {
-      {ident = "spell-healing", casters = {"unit-cleric"}, upgrade = "upgrade-healing", mana = 2},
-      {ident = "spell-far-seeing", casters = {"unit-cleric"}, upgrade = "upgrade-far-seeing", mana = 35, target = "position"},
-      {ident = "spell-invisibility", casters = {"unit-cleric"}, upgrade = "upgrade-invisibility", mana = 40},
-      {ident = "spell-summon-scorpions", casters = {"unit-conjurer"}, upgrade = "upgrade-scorpion", mana = 30},
-      {ident = "spell-rain-of-fire", casters = {"unit-conjurer"}, upgrade = "upgrade-rain-of-fire", mana = 20},
-      {ident = "spell-summon-elemental", casters = {"unit-conjurer"}, upgrade = "upgrade-water-elemental", mana = 60},
-      {ident = "spell-poison", casters = {"unit-scorpion"}, mana = 0}
-   }
-}
-
-local ORC_TECH = {
-   worker = "unit-peon",
-   cityCenter = "unit-orc-town-hall",
-   firstCityCenter = "unit-orc-first-town-hall",
-   cityCenters = ORC_CITY_CENTERS,
-   buildings = {
-      {ident = "unit-road", producers = ORC_CITY_CENTERS, road = true, maxCount = 12, bootstrapScore = 220},
-      {ident = "unit-orc-farm", producers = {"unit-peon"}, demandDriven = true, maxCount = 12, bootstrapScore = 200},
-      {ident = "unit-orc-town-hall", producers = {"unit-peon"}, cityCenter = true, maxCount = 3, bootstrapScore = 240},
-      {ident = "unit-orc-barracks", producers = {"unit-peon"}, baseLimit = 1, workersPerAdditional = 12, maxCount = 3, bootstrapScore = 180},
-      {ident = "unit-orc-lumber-mill", producers = {"unit-peon"}, maxCount = 1, bootstrapScore = 170},
-      {ident = "unit-orc-blacksmith", producers = {"unit-peon"}, maxCount = 1, bootstrapScore = 160},
-      {ident = "unit-orc-temple", producers = {"unit-peon"}, baseLimit = 1, workersPerAdditional = 18, maxCount = 2, bootstrapScore = 150},
-      {ident = "unit-orc-kennel", producers = {"unit-peon"}, baseLimit = 1, workersPerAdditional = 18, maxCount = 2, bootstrapScore = 150},
-      {ident = "unit-orc-tower", producers = {"unit-peon"}, baseLimit = 1, workersPerAdditional = 18, maxCount = 2, bootstrapScore = 150},
-      {ident = "unit-wall", producers = ORC_CITY_CENTERS, maxCount = 16, bootstrapScore = 60}
-   },
-   training = {
-      {ident = "unit-peon", producers = {"unit-orc-town-hall", "unit-orc-blackrock-spire"}, bootstrapScore = 220},
-      {ident = "unit-grunt", producers = {"unit-orc-barracks"}, bootstrapScore = 180},
-      {ident = "unit-spearman", producers = {"unit-orc-barracks"}, bootstrapScore = 180},
-      {ident = "unit-orc-catapult", producers = {"unit-orc-barracks"}, bootstrapScore = 180},
-      {ident = "unit-raider", producers = {"unit-orc-barracks"}, bootstrapScore = 180},
-      {ident = "unit-necrolyte", producers = {"unit-orc-temple"}, bootstrapScore = 170},
-      {ident = "unit-warlock", producers = {"unit-orc-tower"}, bootstrapScore = 170}
-   },
-   research = {
-      {ident = "upgrade-axe1", producers = {"unit-orc-blacksmith"}},
-      {ident = "upgrade-axe2", producers = {"unit-orc-blacksmith"}},
-      {ident = "upgrade-orc-shield1", producers = {"unit-orc-blacksmith"}},
-      {ident = "upgrade-orc-shield2", producers = {"unit-orc-blacksmith"}},
-      {ident = "upgrade-spear1", producers = {"unit-orc-lumber-mill"}},
-      {ident = "upgrade-spear2", producers = {"unit-orc-lumber-mill"}},
-      {ident = "upgrade-wolves1", producers = {"unit-orc-kennel"}},
-      {ident = "upgrade-wolves2", producers = {"unit-orc-kennel"}},
-      {ident = "upgrade-raise-dead", producers = {"unit-orc-temple"}},
-      {ident = "upgrade-dark-vision", producers = {"unit-orc-temple"}},
-      {ident = "upgrade-unholy-armor", producers = {"unit-orc-temple"}},
-      {ident = "upgrade-spider", producers = {"unit-orc-tower"}},
-      {ident = "upgrade-poison-cloud", producers = {"unit-orc-tower"}},
-      {ident = "upgrade-daemon", producers = {"unit-orc-tower"}}
-   },
-   spells = {
-      {ident = "spell-raise-dead", casters = {"unit-necrolyte"}, upgrade = "upgrade-raise-dead", mana = 25},
-      {ident = "spell-dark-vision", casters = {"unit-necrolyte"}, upgrade = "upgrade-dark-vision", mana = 35, target = "position"},
-      {ident = "spell-unholy-armor", casters = {"unit-necrolyte"}, upgrade = "upgrade-unholy-armor", mana = 55},
-      {ident = "spell-summon-spiders", casters = {"unit-warlock"}, upgrade = "upgrade-spider", mana = 30},
-      {ident = "spell-poison-cloud", casters = {"unit-warlock"}, upgrade = "upgrade-poison-cloud", mana = 7},
-      {ident = "spell-summon-daemon", casters = {"unit-warlock"}, upgrade = "upgrade-daemon", mana = 60},
-      {ident = "spell-slow", casters = {"unit-spider"}, mana = 0}
-   }
-}
-
-if preferences.RebalancedStats then
-   table.insert(HUMAN_TECH.buildings, {ident = "unit-human-first-town-hall", producers = {"unit-peasant"}, initialCityCenter = true, bootstrapScore = 260})
-   table.insert(HUMAN_TECH.buildings, {ident = "unit-human-guard-tower", producers = {"unit-peasant"}, maxCount = 4, bootstrapScore = 130})
-   table.insert(HUMAN_TECH.training, {ident = "unit-sorceress", producers = {"unit-human-church"}, bootstrapScore = 170})
-   for _, specification in ipairs({
-      {ident = "upgrade-human-barding1", producers = {"unit-human-stable"}},
-      {ident = "upgrade-human-barding2", producers = {"unit-human-stable"}},
-      {ident = "upgrade-human-LightArmor1", producers = {"unit-human-blacksmith"}},
-      {ident = "upgrade-human-LightArmor2", producers = {"unit-human-blacksmith"}},
-      {ident = "upgrade-human-CatapultAmmo1", producers = {"unit-human-blacksmith"}},
-      {ident = "upgrade-human-BuildingArmor1", producers = {"unit-human-lumber-mill"}},
-      {ident = "upgrade-human-BuildingArmor2", producers = {"unit-human-lumber-mill"}},
-      {ident = "upgrade-human-CatapultSpeed", producers = {"unit-human-lumber-mill"}},
-      {ident = "upgrade-hail", producers = {"unit-human-church"}},
-      {ident = "upgrade-freeze", producers = {"unit-human-tower"}}
-   }) do
-      table.insert(HUMAN_TECH.research, specification)
-   end
-   table.insert(HUMAN_TECH.spells, {ident = "spell-hail", casters = {"unit-sorceress"}, upgrade = "upgrade-hail", mana = 30})
-   table.insert(HUMAN_TECH.spells, {ident = "spell-freeze", casters = {"unit-sorceress"}, upgrade = "upgrade-freeze", mana = 35})
-
-   table.insert(ORC_TECH.buildings, {ident = "unit-orc-first-town-hall", producers = {"unit-peon"}, initialCityCenter = true, bootstrapScore = 260})
-   table.insert(ORC_TECH.buildings, {ident = "unit-orc-watch-tower", producers = {"unit-peon"}, maxCount = 4, bootstrapScore = 130})
-   for _, specification in ipairs({
-      {ident = "upgrade-orc-saliva1", producers = {"unit-orc-kennel"}},
-      {ident = "upgrade-orc-saliva2", producers = {"unit-orc-kennel"}},
-      {ident = "upgrade-orc-LightArmor1", producers = {"unit-orc-blacksmith"}},
-      {ident = "upgrade-orc-LightArmor2", producers = {"unit-orc-blacksmith"}},
-      {ident = "upgrade-orc-CatapultAmmo1", producers = {"unit-orc-blacksmith"}},
-      {ident = "upgrade-orc-BuildingArmor1", producers = {"unit-orc-lumber-mill"}},
-      {ident = "upgrade-orc-BuildingArmor2", producers = {"unit-orc-lumber-mill"}},
-      {ident = "upgrade-orc-CatapultSpeed", producers = {"unit-orc-lumber-mill"}}
-   }) do
-      table.insert(ORC_TECH.research, specification)
-   end
-end
-
+-- These describe observations only; they do not restrict which actors can act.
 local UNIT_ROLES = {
-   ["unit-peasant"] = "worker",
-   ["unit-peon"] = "worker",
-   ["unit-human-town-hall"] = "cityCenter",
-   ["unit-human-first-town-hall"] = "cityCenter",
-   ["unit-human-stormwind-keep"] = "cityCenter",
-   ["unit-orc-town-hall"] = "cityCenter",
-   ["unit-orc-first-town-hall"] = "cityCenter",
-   ["unit-orc-blackrock-spire"] = "cityCenter",
-   ["unit-human-farm"] = "farm",
-   ["unit-orc-farm"] = "farm",
-   ["unit-human-barracks"] = "barracks",
-   ["unit-orc-barracks"] = "barracks",
-   ["unit-human-lumber-mill"] = "lumberMill",
-   ["unit-orc-lumber-mill"] = "lumberMill",
-   ["unit-human-blacksmith"] = "blacksmith",
-   ["unit-orc-blacksmith"] = "blacksmith",
-   ["unit-human-stable"] = "stables",
-   ["unit-orc-kennel"] = "stables",
-   ["unit-human-church"] = "sanctuary",
-   ["unit-orc-temple"] = "sanctuary",
-   ["unit-human-tower"] = "mageTower",
-   ["unit-orc-tower"] = "mageTower",
-   ["unit-road"] = "road",
-   ["unit-footman"] = "soldier",
-   ["unit-grunt"] = "soldier",
-   ["unit-archer"] = "shooter",
-   ["unit-spearman"] = "shooter",
-   ["unit-knight"] = "cavalry",
-   ["unit-raider"] = "cavalry",
-   ["unit-human-catapult"] = "catapult",
-   ["unit-orc-catapult"] = "catapult",
-   ["unit-cleric"] = "supportCaster",
-   ["unit-necrolyte"] = "supportCaster",
-   ["unit-conjurer"] = "combatCaster",
-   ["unit-warlock"] = "combatCaster",
-   ["unit-sorceress"] = "combatCaster"
+   ["unit-peasant"] = 1, ["unit-peon"] = 1,
+   ["unit-human-town-hall"] = 2, ["unit-human-first-town-hall"] = 2,
+   ["unit-human-stormwind-keep"] = 2, ["unit-orc-town-hall"] = 2,
+   ["unit-orc-first-town-hall"] = 2, ["unit-orc-blackrock-spire"] = 2,
+   ["unit-human-farm"] = 3, ["unit-orc-farm"] = 3,
+   ["unit-human-barracks"] = 4, ["unit-orc-barracks"] = 4,
+   ["unit-human-lumber-mill"] = 5, ["unit-orc-lumber-mill"] = 5,
+   ["unit-human-blacksmith"] = 6, ["unit-orc-blacksmith"] = 6,
+   ["unit-human-stable"] = 7, ["unit-orc-kennel"] = 7,
+   ["unit-footman"] = 8, ["unit-grunt"] = 8,
+   ["unit-archer"] = 9, ["unit-spearman"] = 9,
+   ["unit-knight"] = 10, ["unit-raider"] = 10,
+   ["unit-human-catapult"] = 11, ["unit-orc-catapult"] = 11,
+   ["unit-human-church"] = 12, ["unit-orc-temple"] = 12,
+   ["unit-human-tower"] = 13, ["unit-orc-tower"] = 13,
+   ["unit-road"] = 14,
+   ["unit-cleric"] = 15, ["unit-necrolyte"] = 15,
+   ["unit-conjurer"] = 16, ["unit-warlock"] = 16,
+   ["unit-sorceress"] = 16
 }
 
-local ROLE_CODES = {
-   worker = 1,
-   cityCenter = 2,
-   farm = 3,
-   barracks = 4,
-   lumberMill = 5,
-   blacksmith = 6,
-   stables = 7,
-   soldier = 8,
-   shooter = 9,
-   cavalry = 10,
-   catapult = 11,
-   sanctuary = 12,
-   mageTower = 13,
-   road = 14,
-   supportCaster = 15,
-   combatCaster = 16
+-- Shared orders are offered for every actor, including buildings. The engine,
+-- not this list, decides whether any particular actor may execute an order.
+local PRIMITIVE_ACTIONS = {
+   {verb = "stop", target = "none"},
+   {verb = "stand-ground", target = "none"},
+   {verb = "explore", target = "position"},
+   {verb = "cancel-build", target = "none"},
+   {verb = "cancel-research", target = "none"},
+   {verb = "cancel-upgrade-to", target = "none"},
+   {verb = "cancel-training", target = "none"},
+   {verb = "move", target = "position"},
+   {verb = "patrol", target = "position"},
+   {verb = "attack-ground", target = "position"},
+   {verb = "resource-location", target = "position"},
+   {verb = "unload", target = "position"},
+   {verb = "attack", target = "entity"},
+   {verb = "follow", target = "entity"},
+   {verb = "resource", target = "entity"},
+   {verb = "repair", target = "entity"},
+   {verb = "board", target = "entity"},
+   {verb = "return-goods", target = "entity"}
 }
-
-local KIND_NAMES = {
-   [KIND_WAIT] = "wait",
-   [KIND_GATHER_GOLD] = "gather-gold",
-   [KIND_GATHER_WOOD] = "gather-wood",
-   [KIND_BUILD] = "build",
-   [KIND_TRAIN] = "train",
-   [KIND_RESEARCH] = "research",
-   [KIND_ATTACK_ENTITY] = "attack-entity",
-   [KIND_MOVE_GROUP] = "move-group",
-   [KIND_EXPLORE] = "explore",
-   [KIND_REPAIR] = "repair",
-   [KIND_FORMATION] = "formation",
-   [KIND_DEFEND] = "defend",
-   [KIND_CAST_SPELL] = "cast-spell"
+local CATALOG_TARGETS = {
+   ["build-at"] = "position", ["cast-position"] = "position",
+   ["cast-unit"] = "entity", ["cast-self"] = "none", ["train"] = "none",
+   ["research"] = "none", ["upgrade-to"] = "none"
 }
-
 local UNIT_METADATA = {}
-local UPGRADE_METADATA = {}
 
 local function Number(value)
    value = tonumber(value)
-   if value == nil or value ~= value then
-      return 0
-   end
+   if value == nil or value ~= value then return 0 end
    return value
 end
 
 local function UInt32(value)
-   value = math.floor(Number(value))
-   value = value % UINT32_MODULUS
-   if value < 0 then
-      value = value + UINT32_MODULUS
-   end
+   value = math.floor(Number(value)) % UINT32_MODULUS
+   if value < 0 then value = value + UINT32_MODULUS end
    return value
 end
 
 local function NonNegativeWord(value)
-   value = Number(value)
-   if value < 0 then
-      return 0
-   end
-   return UInt32(value)
-end
-
-local function SignedWord(value)
-   return UInt32(value)
+   return UInt32(math.max(0, Number(value)))
 end
 
 local function Signed32(word)
    word = UInt32(word)
-   if word >= INT32_SIGN then
-      return word - UINT32_MODULUS
-   end
+   if word >= INT32_SIGN then return word - UINT32_MODULUS end
    return word
 end
 
 local function Round(value)
-   if value < 0 then
-      return math.ceil(value - 0.5)
-   end
+   if value < 0 then return math.ceil(value - 0.5) end
    return math.floor(value + 0.5)
 end
 
 local function ClampReward(value)
-   if value < -1000 then
-      return -1000
-   end
-   if value > 1000 then
-      return 1000
-   end
-   return value
+   return math.max(-1000, math.min(1000, value))
 end
 
 local function JsonString(value)
@@ -355,179 +120,83 @@ end
 
 function War1gusAiLog(eventType, fields)
    local output = {"{\"type\":" .. JsonString(eventType)}
-   if fields ~= nil then
-      for _, field in ipairs(fields) do
-         table.insert(output, ",\"" .. field.name .. "\":" .. field.value)
-      end
+   for _, field in ipairs(fields or {}) do
+      table.insert(output, ",\"" .. field.name .. "\":" .. field.value)
    end
    table.insert(output, "}")
    print(table.concat(output))
 end
 
-
 local function Xor32(left, right)
-   left = UInt32(left)
-   right = UInt32(right)
-   local result = 0
-   local bit = 1
+   left, right = UInt32(left), UInt32(right)
+   local result, bit = 0, 1
    for _ = 1, 32 do
-      local leftBit = left % 2
-      local rightBit = right % 2
-      if leftBit ~= rightBit then
-         result = result + bit
-      end
-      left = math.floor(left / 2)
-      right = math.floor(right / 2)
-      bit = bit * 2
+      if left % 2 ~= right % 2 then result = result + bit end
+      left, right, bit = math.floor(left / 2), math.floor(right / 2), bit * 2
    end
    return result
-end
-
-local function MultiplyFNVPrime(value)
-   local low = value % 65536
-   local high = math.floor(value / 65536)
-   local lowProduct = low * 403
-   local resultLow = lowProduct % 65536
-   local resultHigh = (math.floor(lowProduct / 65536) + low * 256 + high * 403) % 65536
-   return resultLow + resultHigh * 65536
 end
 
 local function StableHash32(value)
    local hash = 2166136261
    for index = 1, string.len(value) do
-      hash = MultiplyFNVPrime(Xor32(hash, string.byte(value, index)))
+      hash = Xor32(hash, string.byte(value, index))
+      local low = hash % 65536
+      local high = math.floor(hash / 65536)
+      local product = low * 403
+      hash = product % 65536 +
+         (math.floor(product / 65536) + low * 256 + high * 403) % 65536 * 65536
    end
    return hash
-end
-
-local function UpgradeMetadata(ident)
-   local metadata = UPGRADE_METADATA[ident]
-   if metadata == nil then
-      local upgrade = CUpgrade:Get(ident)
-      if upgrade == nil then
-         return nil
-      end
-      metadata = {
-         typeHash = StableHash32(ident),
-         goldCost = Number(upgrade.Costs[1]),
-         woodCost = Number(upgrade.Costs[2])
-      }
-      UPGRADE_METADATA[ident] = metadata
-   end
-   return metadata
-end
-
-
-local function SortBySlot(units)
-   table.sort(units, function(left, right)
-      return left.slot < right.slot
-   end)
-end
-
-local function ResourceKind(resource)
-   if resource == "gold" then
-      return RESOURCE_GOLD
-   end
-   if resource == "wood" or resource == "lumber" then
-      return RESOURCE_WOOD
-   end
-   return RESOURCE_NONE
 end
 
 local function TypeMetadata(ident)
    local metadata = UNIT_METADATA[ident]
    if metadata == nil then
       metadata = {
-         typeHash = StableHash32(ident),
+         hash = StableHash32(ident),
          building = GetUnitTypeData(ident, "Building"),
          canAttack = GetUnitTypeData(ident, "CanAttack"),
          resource = GetUnitTypeData(ident, "GivesResource"),
          goldCost = Number(GetUnitTypeData(ident, "Costs", "gold")),
          woodCost = Number(GetUnitTypeData(ident, "Costs", "wood")),
-         attackRange = Number(GetUnitTypeData(ident, "MaxAttackRange")),
-         tileWidth = Number(GetUnitTypeData(ident, "TileWidth")),
-         tileHeight = Number(GetUnitTypeData(ident, "TileHeight")),
-         sightRange = 0
+         attackRange = Number(GetUnitTypeData(ident, "MaxAttackRange"))
       }
       UNIT_METADATA[ident] = metadata
    end
    return metadata
 end
 
-local function UnitMetadata(slot, ident)
-   local metadata = TypeMetadata(ident)
-   if metadata.sightRange == 0 then
-      metadata.sightRange = Number(GetUnitVariable(slot, "SightRange"))
-   end
-   return metadata
+local function ResourceKind(resource)
+   if resource == "gold" then return RESOURCE_GOLD end
+   if resource == "wood" or resource == "lumber" then return RESOURCE_WOOD end
+   return RESOURCE_NONE
 end
 
 local function ReadUnit(slot)
-   if not GetUnitVariable(slot, "Active") then
-      return nil
-   end
-
    local ident = GetUnitVariable(slot, "Ident")
-   if ident == nil then
-      return nil
-   end
-
-   local hitPoints = Number(GetUnitVariable(slot, "HitPoints"))
-   if hitPoints <= 0 and ident ~= "unit-road" then
-      return nil
-   end
-
-   local metadata = UnitMetadata(slot, ident)
+   if ident == nil then return nil end
+   local hp = Number(GetUnitVariable(slot, "HitPoints"))
+   local metadata = TypeMetadata(ident)
    local attackRange = Number(GetUnitVariable(slot, "AttackRange"))
-   local sightRange = Number(GetUnitVariable(slot, "SightRange"))
-   if attackRange <= 0 then
-      attackRange = metadata.attackRange
-   end
-   if sightRange <= 0 then
-      sightRange = metadata.sightRange
-   end
-
-   local role = UNIT_ROLES[ident]
+   if attackRange <= 0 then attackRange = metadata.attackRange end
    return {
-      slot = slot,
+      slot = slot, ident = ident,
       owner = Number(GetUnitVariable(slot, "Player")),
-      ident = ident,
-      role = role,
-      idle = GetUnitVariable(slot, "Idle"),
-      gathering = role == "worker" and GetUnitVariable(slot, "Gathering") or false,
       x = Number(GetUnitVariable(slot, "PosX")),
       y = Number(GetUnitVariable(slot, "PosY")),
-      hitPoints = hitPoints,
-      maxHitPoints = math.max(Number(GetUnitVariable(slot, "HitPoints", "Max")), 1),
-      mana = Number(GetUnitVariable(slot, "Mana")),
+      hp = hp,
+      maxHp = math.max(Number(GetUnitVariable(slot, "HitPoints", "Max")), 1),
+      idle = GetUnitVariable(slot, "Idle"),
       building = metadata.building,
       wall = GetUnitBoolFlag(slot, "Wall"),
       canAttack = metadata.canAttack,
-      resource = metadata.resource,
       resourceKind = ResourceKind(metadata.resource),
-      goldCost = metadata.goldCost,
-      woodCost = metadata.woodCost,
-      typeHash = metadata.typeHash,
-      attackRange = attackRange,
-      sightRange = sightRange
+      goldCost = metadata.goldCost, woodCost = metadata.woodCost,
+      hash = metadata.hash, attackRange = attackRange,
+      sightRange = Number(GetUnitVariable(slot, "SightRange")),
+      role = UNIT_ROLES[ident] or 0
    }
-end
-
-local function IsEnemy(playerIndex, owner)
-   if owner == playerIndex or Players[playerIndex] == nil or Players[owner] == nil then
-      return false
-   end
-   return Players[playerIndex]:IsEnemy(Players[owner])
-end
-
-local function OnMapUnits(world, units)
-   local result = {}
-   for _, unit in ipairs(units) do
-      if world.onMapSlots[unit.slot] then
-         table.insert(result, unit)
-      end
-   end
-   return result
 end
 
 local function NewWorldSnapshot(playerIndex)
@@ -537,187 +206,48 @@ local function NewWorldSnapshot(playerIndex)
       wood = Number(GetPlayerData(playerIndex, "Resources", "wood")),
       supply = Number(GetPlayerData(playerIndex, "Supply")),
       demand = Number(GetPlayerData(playerIndex, "Demand")),
-      width = Number(Map.Info.MapWidth),
-      height = Number(Map.Info.MapHeight),
-      own = {},
-      ownByIdent = {},
-      ownTypeCounts = {},
-      ownMobile = {},
-      workers = {},
-      cityCenters = {},
-      roads = {},
-      attackers = {},
-      ownBuildings = {},
-      enemy = {},
-      enemyUnits = {},
-      enemyBuildings = {},
-      resources = {},
-      entities = {},
-      roleCounts = {}
+      width = Number(Map.Info.MapWidth), height = Number(Map.Info.MapHeight),
+      entities = {}, own = {}, enemy = {}, bySlot = {},
+      ownAssets = {}, enemyAssets = {}
    }
-
    for _, slot in ipairs(GetUnits("any")) do
       local unit = ReadUnit(slot)
       if unit ~= nil then
-         if unit.role == "road" then
-            table.insert(world.roads, unit)
+         if unit.owner == playerIndex then
+            unit.relation = RELATION_OWN
+            world.ownAssets[#world.ownAssets + 1] = unit
+         elseif Players[playerIndex] ~= nil and Players[unit.owner] ~= nil and
+            Players[playerIndex]:IsEnemy(Players[unit.owner]) then
+            unit.relation = RELATION_ENEMY
+            world.enemyAssets[#world.enemyAssets + 1] = unit
          else
-            local relation = nil
-            if unit.owner == playerIndex then
-               relation = RELATION_OWN
-            elseif IsEnemy(playerIndex, unit.owner) then
-               relation = RELATION_ENEMY
-            elseif unit.resourceKind ~= RESOURCE_NONE then
-               relation = RELATION_NEUTRAL
+            unit.relation = RELATION_NEUTRAL
+         end
+         -- Cargo still counts toward owned/enemy assets, but only units that
+         -- the host confirms alive on the map become observable actors/targets.
+         if AiUnitOnMap(slot) and unit.x >= 0 and unit.y >= 0 and
+            unit.x < world.width and unit.y < world.height then
+            if unit.relation == RELATION_OWN then
+               world.own[#world.own + 1] = unit
+            elseif unit.relation == RELATION_ENEMY then
+               world.enemy[#world.enemy + 1] = unit
             end
-
-            if relation ~= nil then
-               unit.relation = relation
-               table.insert(world.entities, unit)
-               if relation == RELATION_OWN then
-                  table.insert(world.own, unit)
-                  if world.ownByIdent[unit.ident] == nil then
-                     world.ownByIdent[unit.ident] = {}
-                  end
-                  table.insert(world.ownByIdent[unit.ident], unit)
-                  world.ownTypeCounts[unit.ident] = (world.ownTypeCounts[unit.ident] or 0) + 1
-                  if unit.role ~= nil then
-                     world.roleCounts[unit.role] = (world.roleCounts[unit.role] or 0) + 1
-                  end
-                  if unit.building then
-                     table.insert(world.ownBuildings, unit)
-                  else
-                     table.insert(world.ownMobile, unit)
-                     if unit.canAttack then
-                        table.insert(world.attackers, unit)
-                     end
-                  end
-                  if unit.role == "worker" then
-                     table.insert(world.workers, unit)
-                  elseif unit.role == "cityCenter" then
-                     table.insert(world.cityCenters, unit)
-                  end
-               elseif relation == RELATION_ENEMY then
-                  table.insert(world.enemy, unit)
-                  if not unit.wall then
-                     if unit.building then
-                        table.insert(world.enemyBuildings, unit)
-                     else
-                        table.insert(world.enemyUnits, unit)
-                     end
-                  end
-               else
-                  table.insert(world.resources, unit)
-               end
-            end
+            world.entities[#world.entities + 1] = unit
+            world.bySlot[unit.slot] = unit
          end
       end
    end
-
-   SortBySlot(world.entities)
-   for index, unit in ipairs(world.entities) do
-      unit.entityIndex = index
-   end
-   SortBySlot(world.own)
-   SortBySlot(world.ownMobile)
-   SortBySlot(world.workers)
-   SortBySlot(world.cityCenters)
-   SortBySlot(world.roads)
-   SortBySlot(world.attackers)
-   SortBySlot(world.ownBuildings)
-   SortBySlot(world.enemy)
-   SortBySlot(world.enemyUnits)
-   SortBySlot(world.enemyBuildings)
-   SortBySlot(world.resources)
-
-   world.onMapSlots = {}
-   local anchor = world.resources[1] or world.ownBuildings[1] or world.enemyBuildings[1] or
-      world.own[1] or world.enemy[1]
-   if anchor ~= nil then
-      world.onMapSlots[anchor.slot] = true
-      local range = math.max(world.width, world.height)
-      for _, allUnits in ipairs({true, false}) do
-         for _, slot in ipairs(GetUnitsAroundUnit(anchor.slot, range, allUnits)) do
-            world.onMapSlots[slot] = true
-         end
-      end
-   end
-   world.commandWorkers = OnMapUnits(world, world.workers)
-   world.commandCityCenters = OnMapUnits(world, world.cityCenters)
-   world.commandRoads = OnMapUnits(world, world.roads)
-   world.commandAttackers = OnMapUnits(world, world.attackers)
-   world.commandOwnBuildings = OnMapUnits(world, world.ownBuildings)
-   world.commandEnemyUnits = OnMapUnits(world, world.enemyUnits)
-   world.commandEnemyBuildings = OnMapUnits(world, world.enemyBuildings)
-   world.commandResources = OnMapUnits(world, world.resources)
+   table.sort(world.entities, function(a, b) return a.slot < b.slot end)
+   table.sort(world.own, function(a, b) return a.slot < b.slot end)
+   for index, unit in ipairs(world.entities) do unit.entityIndex = index end
    return world
-end
-
-local function DistanceSquared(first, second)
-   local x = first.x - second.x
-   local y = first.y - second.y
-   return x * x + y * y
-end
-
-local function Distance(first, second)
-   return math.floor(math.sqrt(DistanceSquared(first, second)) + 0.5)
-end
-
-local function IdleUnits(units)
-   local idle = {}
-   for _, unit in ipairs(units) do
-      if unit.idle then
-         table.insert(idle, unit)
-      end
-   end
-   return idle
-end
-
-local function ProducerUnits(world, identifiers, includeGatheringWorkers)
-   local producers = {}
-   for _, ident in ipairs(identifiers) do
-      for _, unit in ipairs(world.ownByIdent[ident] or {}) do
-         if (unit.idle or (includeGatheringWorkers and unit.role == "worker" and unit.gathering))
-            and world.onMapSlots[unit.slot] then
-            table.insert(producers, unit)
-         end
-      end
-   end
-   SortBySlot(producers)
-   return producers
-end
-
-local function CanAfford(world, ident)
-   local metadata = TypeMetadata(ident)
-   return world.gold >= metadata.goldCost and world.wood >= metadata.woodCost
-end
-
-local function IsAllowed(world, ident)
-   return GetPlayerData(world.playerIndex, "Allow", ident) == "A" and
-      CheckDependency(world.playerIndex, ident)
-end
-
-local function CanProduce(world, ident)
-   return IsAllowed(world, ident) and CanAfford(world, ident)
-end
-
-local function CanResearch(world, ident)
-   local metadata = UpgradeMetadata(ident)
-   return metadata ~= nil and
-      IsAllowed(world, ident) and
-      world.gold >= metadata.goldCost and
-      world.wood >= metadata.woodCost
-end
-
-local function HasUpgrade(world, ident)
-   return ident == nil or GetPlayerData(world.playerIndex, "Allow", ident) == "R"
 end
 
 local function AssetValue(units)
    local total = 0
    for _, unit in ipairs(units) do
       if not unit.wall then
-         total = total + (unit.goldCost + unit.woodCost) * unit.hitPoints / unit.maxHitPoints
+         total = total + (unit.goldCost + unit.woodCost) * unit.hp / unit.maxHp
       end
    end
    return total
@@ -728,62 +258,41 @@ local function RewardBooks()
 end
 
 local function RewardComponents(playerIndex, world, terminal)
-   local enemyAsset = AssetValue(world.enemy)
-   local ownAsset = AssetValue(world.own)
+   local enemyAsset, ownAsset = AssetValue(world.enemyAssets), AssetValue(world.ownAssets)
    local books = RewardBooks()
    local book = books[playerIndex]
-   local components = {
-      enemyProgress = 0,
-      ownLoss = 0,
-      time = 0,
-      terminal = 0
-   }
+   local components = {enemyProgress = 0, ownLoss = 0, time = 0, terminal = 0}
    local canStart = GetNumOpponents(playerIndex) > 0 or enemyAsset > 0
-
    if book == nil or not book.started then
       if canStart then
          book = {
-            started = true,
-            hadOpponent = true,
-            initialEnemy = math.max(enemyAsset, 1),
-            maxOwn = math.max(ownAsset, 1),
-            previousEnemy = enemyAsset,
-            previousOwn = ownAsset,
+            started = true, hadOpponent = true,
+            initialEnemy = math.max(enemyAsset, 1), maxOwn = math.max(ownAsset, 1),
+            previousEnemy = enemyAsset, previousOwn = ownAsset,
             previousTimeBucket = math.floor(GameCycle / 300)
          }
          books[playerIndex] = book
       end
    else
       components.enemyProgress = Round(
-         600 * (book.previousEnemy - enemyAsset) / math.max(book.initialEnemy, 1)
-      )
+         600 * (book.previousEnemy - enemyAsset) / math.max(book.initialEnemy, 1))
       book.maxOwn = math.max(book.maxOwn, ownAsset, 1)
       components.ownLoss = -Round(
-         150 * math.max(book.previousOwn - ownAsset, 0) / book.maxOwn
-      )
+         150 * math.max(book.previousOwn - ownAsset, 0) / book.maxOwn)
       local bucket = math.floor(GameCycle / 300)
       components.time = -math.max(bucket - book.previousTimeBucket, 0)
-      book.previousEnemy = enemyAsset
-      book.previousOwn = ownAsset
-      book.previousTimeBucket = bucket
+      book.previousEnemy, book.previousOwn, book.previousTimeBucket =
+         enemyAsset, ownAsset, bucket
    end
-
-   if terminal == "defeat" then
-      components.terminal = -1000
-   elseif terminal == "victory" then
-      components.terminal = 1000
-   end
-
+   if terminal == "defeat" then components.terminal = -1000 end
+   if terminal == "victory" then components.terminal = 1000 end
    components.total = ClampReward(
-      components.enemyProgress + components.ownLoss + components.time + components.terminal
-   )
+      components.enemyProgress + components.ownLoss + components.time + components.terminal)
    return components, ownAsset, enemyAsset
 end
 
-local function TerminalOutcome(playerIndex, world)
-   if Number(GetPlayerData(playerIndex, "TotalNumUnits")) == 0 then
-      return "defeat"
-   end
+local function TerminalOutcome(playerIndex)
+   if Number(GetPlayerData(playerIndex, "TotalNumUnits")) == 0 then return "defeat" end
    local book = RewardBooks()[playerIndex]
    if book ~= nil and book.started and book.hadOpponent and GetNumOpponents(playerIndex) == 0 then
       return "victory"
@@ -793,597 +302,161 @@ end
 
 local function EntityWords(unit)
    local flags = 0
-   if unit.canAttack then
-      flags = flags + 1
-   end
-   if unit.building then
-      flags = flags + 2
-   end
-   if unit.wall then
-      flags = flags + 4
-   end
-   if unit.idle then
-      flags = flags + 8
-   end
+   if unit.canAttack then flags = flags + 1 end
+   if unit.building then flags = flags + 2 end
+   if unit.wall then flags = flags + 4 end
+   if unit.idle then flags = flags + 8 end
    return {
-      NonNegativeWord(unit.slot),
-      UInt32(unit.typeHash),
-      NonNegativeWord(unit.relation),
-      NonNegativeWord(ROLE_CODES[unit.role] or 0),
-      NonNegativeWord(unit.x),
-      NonNegativeWord(unit.y),
-      NonNegativeWord(unit.hitPoints),
-      NonNegativeWord(unit.maxHitPoints),
-      NonNegativeWord(unit.goldCost),
-      NonNegativeWord(unit.woodCost),
-      NonNegativeWord(flags),
-      NonNegativeWord(unit.resourceKind),
-      NonNegativeWord(unit.attackRange),
-      NonNegativeWord(unit.sightRange)
+      NonNegativeWord(unit.slot), UInt32(unit.hash), NonNegativeWord(unit.relation),
+      NonNegativeWord(unit.role), NonNegativeWord(unit.x), NonNegativeWord(unit.y),
+      NonNegativeWord(unit.hp), NonNegativeWord(unit.maxHp),
+      NonNegativeWord(unit.goldCost), NonNegativeWord(unit.woodCost),
+      NonNegativeWord(flags), NonNegativeWord(unit.resourceKind),
+      NonNegativeWord(unit.attackRange), NonNegativeWord(unit.sightRange)
    }
 end
 
 local function AppendWords(destination, source)
-   for _, word in ipairs(source) do
-      table.insert(destination, word)
-   end
+   for _, word in ipairs(source) do destination[#destination + 1] = word end
 end
 
-local function CandidateSet()
-   local records = {}
-   local plans = {}
-
-   local function append(kind, plan, fields)
-      if #plans >= MAX_CANDIDATES then
-         return false
-      end
-      fields = fields or {}
-      plan = plan or {kind = "wait"}
-      plan.candidateKind = kind
-      table.insert(plans, plan)
-      table.insert(records, {
-         NonNegativeWord(kind),
-         NonNegativeWord(fields.actor),
-         NonNegativeWord(fields.target),
-         UInt32(fields.auxiliaryHash or 0),
-         NonNegativeWord(fields.x),
-         NonNegativeWord(fields.y),
-         NonNegativeWord(fields.groupSize),
-         NonNegativeWord(fields.formation),
-         NonNegativeWord(fields.cadence),
-         NonNegativeWord(fields.distance),
-         NonNegativeWord(fields.producerCount),
-         NonNegativeWord(fields.bootstrapScore)
-      })
-      return true
-   end
-
-   append(KIND_WAIT, {kind = "wait"}, {cadence = 5})
-   return records, plans, append
+local function ActionIdentity(action)
+   return StableHash32(action.verb .. ":" .. (action.argument or ""))
 end
 
-local function AddDirectCandidate(append, kind, actor, target, verb, argument, fields)
-   if actor == nil then
-      return false
+local function ActionsForActor(playerIndex, actor)
+   local actions = {}
+   for _, action in ipairs(PRIMITIVE_ACTIONS) do
+      actions[#actions + 1] = action
    end
-   fields = fields or {}
-   fields.actor = actor.entityIndex
-   if target ~= nil then
-      fields.target = target.entityIndex
-      if fields.distance == nil then
-         fields.distance = Distance(actor, target)
-      end
-   end
-   return append(kind, {
-      kind = "direct",
-      actor = actor,
-      target = target,
-      verb = verb,
-      argument = argument
-   }, fields)
-end
-
-local function ClampPosition(world, x, y)
-   x = math.max(0, math.min(world.width - 1, math.floor(x)))
-   y = math.max(0, math.min(world.height - 1, math.floor(y)))
-   return x, y
-end
-
-local function FindNearestForest(worker, world)
-   local limit = math.max(world.width, world.height)
-   local result = nil
-   for radius = 0, limit do
-      if result ~= nil and radius * radius > result.distance then
-         break
-      end
-      local minX = math.max(0, worker.x - radius)
-      local maxX = math.min(world.width - 1, worker.x + radius)
-      local minY = math.max(0, worker.y - radius)
-      local maxY = math.min(world.height - 1, worker.y + radius)
-      local function consider(x, y)
-         if GetTileTerrainHasFlag(x, y, "forest") then
-            local dx = worker.x - x
-            local dy = worker.y - y
-            local distance = dx * dx + dy * dy
-            if result == nil or distance < result.distance or
-               (distance == result.distance and (y < result.y or (y == result.y and x < result.x))) then
-               result = {x = x, y = y, distance = distance}
-            end
-         end
-      end
-      for x = minX, maxX do
-         consider(x, minY)
-         if maxY ~= minY then
-            consider(x, maxY)
-         end
-      end
-      for y = minY + 1, maxY - 1 do
-         consider(minX, y)
-         if maxX ~= minX then
-            consider(maxX, y)
+   for _, entry in ipairs(AiActionCatalog(playerIndex)) do
+      if entry.actor == actor.ident then
+         local target = CATALOG_TARGETS[entry.verb]
+         if target ~= nil then
+            actions[#actions + 1] = {
+               verb = entry.verb, argument = entry.argument, target = target
+            }
          end
       end
    end
-   return result
+   return actions
 end
 
-local function ClosestUnit(origin, units)
-   local result = nil
-   for _, unit in ipairs(units) do
-      local distance = DistanceSquared(origin, unit)
-      if result == nil or distance < result.distance or
-         (distance == result.distance and unit.slot < result.unit.slot) then
-         result = {unit = unit, distance = distance}
-      end
+local function ActorStillPresent(world, original)
+   local actor = original and world.bySlot[original.slot]
+   if actor ~= nil and actor.owner == world.playerIndex and
+      actor.ident == original.ident then
+      return actor
    end
-   return result
+   return nil
 end
 
-
-local function BuildingCount(world, specification)
-   if specification.road then
-      return #world.roads
+local function TargetStillPresent(world, original)
+   local target = original and world.bySlot[original.slot]
+   if target ~= nil and target.owner == original.owner and
+      target.ident == original.ident then
+      return target
    end
-   return world.ownTypeCounts[specification.ident] or 0
+   return nil
 end
 
-
-local function BuildSpecificationEnabled(world, specification)
-   if specification.initialCityCenter then
-      return preferences.RebalancedStats and #world.cityCenters == 0
+local function NewStage(stage, world)
+   if stage == nil or stage.kind == "actor" then
+      return {kind = "actor", page = stage and stage.page or 0}
    end
-   if specification.cityCenter then
-      if #world.cityCenters == 0 then
-         return not preferences.RebalancedStats
-      end
-      return preferences.AllowMultipleTownHalls == true and #world.cityCenters < specification.maxCount
+   local actor = ActorStillPresent(world, stage.actor)
+   if actor == nil then return {kind = "actor", page = 0} end
+   stage.actor = actor
+   if stage.kind ~= "action" and stage.action == nil then
+      return {kind = "actor", page = 0}
    end
-   if specification.demandDriven and world.demand < world.supply then
-      return false
-   end
-   local limit = specification.maxCount
-   if specification.workersPerAdditional ~= nil then
-      limit = math.min(
-         limit,
-         specification.baseLimit + math.floor(#world.workers / specification.workersPerAdditional)
-      )
-   end
-   return limit == nil or BuildingCount(world, specification) < limit
+   return stage
 end
 
-local function AddBuildCandidates(world, tech, append)
-   local buildCount = 0
-   for _, specification in ipairs(tech.buildings) do
-      if BuildSpecificationEnabled(world, specification) and CanProduce(world, specification.ident) then
-         local metadata = TypeMetadata(specification.ident)
-         local producers = ProducerUnits(world, specification.producers, true)
-         for producerIndex, producer in ipairs(producers) do
-            if producerIndex > 16 or buildCount >= 128 then
-               break
-            end
-            if not AddDirectCandidate(
-               append,
-               KIND_BUILD,
-               producer,
-               nil,
-               "build",
-               specification.ident,
-               {
-                  auxiliaryHash = metadata.typeHash,
-                  x = producer.x,
-                  y = producer.y,
-                  cadence = 30,
-                  producerCount = #producers,
-                  bootstrapScore = specification.bootstrapScore or 150
-               }
-            ) then
-               return
-            end
-            buildCount = buildCount + 1
-         end
+local function StageOptions(playerIndex, world, stage)
+   local options = {}
+   local actorIndex = stage.actor and stage.actor.entityIndex or 0
+   local actionHash = stage.action and ActionIdentity(stage.action) or 0
+   if stage.kind == "actor" then
+      for _, actor in ipairs(world.own) do
+         options[#options + 1] = {
+            kind = KIND_ACTOR, actor = actor.entityIndex, value = actor,
+            hash = actor.hash
+         }
+      end
+   elseif stage.kind == "action" then
+      for _, action in ipairs(ActionsForActor(playerIndex, stage.actor)) do
+         options[#options + 1] = {
+            kind = KIND_ACTION, actor = actorIndex, value = action,
+            hash = ActionIdentity(action)
+         }
+      end
+   elseif stage.kind == "entity" then
+      for _, entity in ipairs(world.entities) do
+         options[#options + 1] = {
+            kind = KIND_ENTITY, actor = actorIndex, target = entity.entityIndex,
+            hash = actionHash, value = entity
+         }
+      end
+   elseif stage.kind == "x" then
+      for x = 0, world.width - 1 do
+         options[#options + 1] = {
+            kind = KIND_X, actor = actorIndex, hash = actionHash,
+            x = x, value = x
+         }
+      end
+   elseif stage.kind == "y" then
+      for y = 0, world.height - 1 do
+         options[#options + 1] = {
+            kind = KIND_Y, actor = actorIndex, hash = actionHash,
+            x = stage.x, y = y, value = y
+         }
       end
    end
+   return options
 end
 
-local function AddTrainCandidates(world, tech, append)
-   if world.demand >= world.supply then
-      return
-   end
-   for _, specification in ipairs(tech.training) do
-      if CanProduce(world, specification.ident) then
-         local metadata = TypeMetadata(specification.ident)
-         local producers = ProducerUnits(world, specification.producers)
-         for producerIndex, producer in ipairs(producers) do
-            if producerIndex > 24 then
-               break
-            end
-            if not AddDirectCandidate(append, KIND_TRAIN, producer, nil, "train", specification.ident, {
-               auxiliaryHash = metadata.typeHash,
-               cadence = 30,
-               producerCount = #producers,
-               bootstrapScore = specification.bootstrapScore or 180
-            }) then
-               return
-            end
-         end
-      end
-   end
-end
-
-local function AddResearchCandidates(world, tech, append)
-   for _, specification in ipairs(tech.research) do
-      if CanResearch(world, specification.ident) then
-         local metadata = UpgradeMetadata(specification.ident)
-         local producers = ProducerUnits(world, specification.producers)
-         for producerIndex, producer in ipairs(producers) do
-            if producerIndex > 16 then
-               break
-            end
-            if not AddDirectCandidate(append, KIND_RESEARCH, producer, nil, "research", specification.ident, {
-               auxiliaryHash = metadata.typeHash,
-               cadence = 30,
-               producerCount = #producers,
-               bootstrapScore = 90
-            }) then
-               return
-            end
-         end
-      end
-   end
-end
-
-local function AddMacroCandidates(world, tech, append)
-   AddBuildCandidates(world, tech, append)
-   AddTrainCandidates(world, tech, append)
-   AddResearchCandidates(world, tech, append)
-end
-local function StrategicSpellPositions(world)
-   local maxX = math.max(world.width - 1, 0)
-   local maxY = math.max(world.height - 1, 0)
-   local xCoordinates = {
-      math.floor(maxX / 4),
-      math.floor(maxX / 2),
-      math.floor(3 * maxX / 4)
-   }
-   local yCoordinates = {
-      math.floor(maxY / 4),
-      math.floor(maxY / 2),
-      math.floor(3 * maxY / 4)
-   }
-   local positions = {}
-   local seen = {}
-   for _, y in ipairs(yCoordinates) do
-      for _, x in ipairs(xCoordinates) do
-         local key = x .. ":" .. y
-         if not seen[key] then
-            seen[key] = true
-            table.insert(positions, {x = x, y = y})
-         end
-      end
-   end
-   return positions
-end
-
-
-local function AddSpellCandidates(world, tech, append)
-   for _, specification in ipairs(tech.spells) do
-      if HasUpgrade(world, specification.upgrade) then
-         local casters = ProducerUnits(world, specification.casters)
-         local positions = specification.target == "position" and StrategicSpellPositions(world) or nil
-         for casterIndex, caster in ipairs(casters) do
-            if casterIndex > 32 then
-               break
-            end
-            if caster.mana >= specification.mana then
-               if positions ~= nil then
-                  for _, position in ipairs(positions) do
-                     if not AddDirectCandidate(
-                        append,
-                        KIND_CAST_SPELL,
-                        caster,
-                        nil,
-                        "cast-position",
-                        {spell = specification.ident, x = position.x, y = position.y},
-                        {
-                           auxiliaryHash = StableHash32(specification.ident),
-                           x = position.x,
-                           y = position.y,
-                           cadence = 5,
-                           producerCount = #casters,
-                           bootstrapScore = 110
-                        }
-                     ) then
-                        return
-                     end
-                  end
-               elseif not AddDirectCandidate(
-                  append,
-                  KIND_CAST_SPELL,
-                  caster,
-                  nil,
-                  "cast-auto",
-                  specification.ident,
-                  {
-                     auxiliaryHash = StableHash32(specification.ident),
-                     cadence = 5,
-                     producerCount = #casters,
-                     bootstrapScore = 130
-                  }
-               ) then
-                  return
-               end
-            end
-         end
-      end
-   end
-end
-
-local function AddGatherCandidates(world, append)
-   local goldMines = {}
-   for _, resource in ipairs(world.commandResources) do
-      if resource.resourceKind == RESOURCE_GOLD then
-         table.insert(goldMines, resource)
-      end
-   end
-   for workerIndex, worker in ipairs(IdleUnits(world.commandWorkers)) do
-      if workerIndex > 32 then
-         break
-      end
-      local mine = ClosestUnit(worker, goldMines)
-      if mine ~= nil then
-         if not AddDirectCandidate(append, KIND_GATHER_GOLD, worker, mine.unit, "resource", mine.unit.slot, {
-            cadence = 30,
-            bootstrapScore = 100
-         }) then
-            return
-         end
-      end
-      local forest = FindNearestForest(worker, world)
-      if forest ~= nil then
-         if not AddDirectCandidate(append, KIND_GATHER_WOOD, worker, nil, "resource-location", {forest.x, forest.y}, {
-            x = forest.x,
-            y = forest.y,
-            cadence = 30,
-            distance = math.floor(math.sqrt(forest.distance) + 0.5),
-            bootstrapScore = 100
-         }) then
-            return
-         end
-      end
-   end
-end
-
-local function AttackGroup(attackers, target)
-   local group = {}
-   for _, actor in ipairs(attackers) do
-      table.insert(group, actor)
-   end
+local function CandidateWords(option)
    return {
-      kind = "group",
-      actors = group,
-      verb = "attack",
-      targetSlot = target.slot,
-      target = target
+      NonNegativeWord(option.kind), NonNegativeWord(option.actor),
+      NonNegativeWord(option.target), UInt32(option.hash),
+      NonNegativeWord(option.x), NonNegativeWord(option.y),
+      0, 0, 0, 0, 0, 0
    }
 end
 
-local function MoveGroup(attackers, x, y, target)
-   local group = {}
-   for _, actor in ipairs(attackers) do
-      table.insert(group, actor)
+local function StageCandidates(playerIndex, world, stage)
+   local options = StageOptions(playerIndex, world, stage)
+   local maxCandidates = math.floor((MAX_STATE_WORDS - 22 - 14 * #world.entities) / 12)
+   if maxCandidates < 1 or (maxCandidates == 1 and #options > 0) or
+      (maxCandidates == 2 and #options > 1) then
+      error("v3 observation cannot represent all entities and paged choices")
    end
-   return {
-      kind = "group",
-      actors = group,
-      verb = "move",
-      target = target,
-      position = {x = x, y = y}
-   }
-end
-
-local function FormationPositions(world, actors, target, formation)
-   local positions = {}
-   local count = #actors
-   local columns = math.max(1, math.ceil(math.sqrt(count)))
-   for index = 1, count do
-      local offsetX = 0
-      local offsetY = 0
-      if formation == FORMATION_LINE then
-         offsetX = index - math.ceil(count / 2)
-      elseif formation == FORMATION_BOX then
-         offsetX = (index - 1) % columns - math.floor(columns / 2)
-         offsetY = math.floor((index - 1) / columns) - math.floor(columns / 2)
-      else
-         offsetX = ((index - 1) % 3 - 1) * 3
-         offsetY = (math.floor((index - 1) / 3) - 1) * 3
-      end
-      local x, y = ClampPosition(world, target.x + offsetX, target.y + offsetY)
-      positions[index] = {x = x, y = y}
+   local pageSize = math.max(1, math.min(MAX_PAGE_CHOICES, maxCandidates - 3))
+   local forwardOnly = maxCandidates == 3
+   local lastPage = math.max(0, math.ceil(#options / pageSize) - 1)
+   stage.page = math.max(0, math.min(stage.page or 0, lastPage))
+   local plans = {{kind = KIND_WAIT}}
+   local records = {CandidateWords(plans[1])}
+   local first = stage.page * pageSize + 1
+   for index = first, math.min(first + pageSize - 1, #options) do
+      local option = options[index]
+      plans[#plans + 1], records[#records + 1] = option, CandidateWords(option)
    end
-   return positions
-end
-
-local function AddMicroCandidates(world, append)
-   local workers = IdleUnits(world.commandWorkers)
-   local attackers = world.commandAttackers
-   local groupAttackers = {}
-   for index = 1, math.min(#attackers, MAX_BATCH_COMMANDS) do
-      groupAttackers[index] = attackers[index]
+   if stage.page > 0 and not forwardOnly then
+      local previous = {kind = KIND_PAGE, actor = stage.actor and stage.actor.entityIndex,
+         hash = stage.action and ActionIdentity(stage.action),
+         x = stage.page, value = stage.page - 1}
+      plans[#plans + 1], records[#records + 1] = previous, CandidateWords(previous)
    end
-
-   local damagedBuildings = {}
-   for _, building in ipairs(world.commandOwnBuildings) do
-      if building.hitPoints < building.maxHitPoints then
-         table.insert(damagedBuildings, building)
-      end
+   if stage.page < lastPage or (forwardOnly and lastPage > 0) then
+      local destination = stage.page < lastPage and stage.page + 1 or 0
+      local nextPage = {kind = KIND_PAGE, actor = stage.actor and stage.actor.entityIndex,
+         hash = stage.action and ActionIdentity(stage.action),
+         x = destination + 1, value = destination}
+      plans[#plans + 1], records[#records + 1] = nextPage, CandidateWords(nextPage)
    end
-   for workerIndex, worker in ipairs(workers) do
-      if workerIndex > 32 then
-         break
-      end
-      local damaged = ClosestUnit(worker, damagedBuildings)
-      if damaged ~= nil then
-         if not AddDirectCandidate(append, KIND_REPAIR, worker, damaged.unit, "repair", damaged.unit.slot, {
-            cadence = 5,
-            bootstrapScore = 140
-         }) then
-            return
-         end
-      end
-   end
-
-   local targets = {}
-   for _, target in ipairs(world.commandEnemyUnits) do
-      table.insert(targets, target)
-   end
-   for _, target in ipairs(world.commandEnemyBuildings) do
-      table.insert(targets, target)
-   end
-
-   for actorIndex, actor in ipairs(attackers) do
-      if actorIndex > 64 then
-         break
-      end
-      local target = ClosestUnit(actor, targets)
-      if target ~= nil then
-         if not AddDirectCandidate(append, KIND_ATTACK_ENTITY, actor, target.unit, "attack", target.unit.slot, {
-            cadence = 5,
-            bootstrapScore = target.unit.building and 160 or 200
-         }) then
-            return
-         end
-      end
-   end
-
-   local groupTarget = attackers[1] ~= nil and ClosestUnit(attackers[1], targets) or nil
-   if #groupAttackers > 1 and groupTarget ~= nil then
-      if not append(KIND_ATTACK_ENTITY, AttackGroup(groupAttackers, groupTarget.unit), {
-         actor = attackers[1].entityIndex,
-         target = groupTarget.unit.entityIndex,
-         groupSize = #groupAttackers,
-         cadence = 5,
-         distance = Distance(attackers[1], groupTarget.unit),
-         bootstrapScore = groupTarget.unit.building and 180 or 240
-      }) then
-         return
-      end
-   end
-
-   local base = world.commandCityCenters[1]
-   if base ~= nil then
-      for actorIndex, actor in ipairs(attackers) do
-         if actorIndex > 64 then
-            break
-         end
-         if not AddDirectCandidate(append, KIND_DEFEND, actor, base, "move", {base.x, base.y}, {
-            x = base.x,
-            y = base.y,
-            cadence = 5,
-            bootstrapScore = 80
-         }) then
-            return
-         end
-      end
-      if #groupAttackers > 1 then
-         if not append(KIND_DEFEND, MoveGroup(groupAttackers, base.x, base.y, base), {
-            actor = attackers[1].entityIndex,
-            target = base.entityIndex,
-            x = base.x,
-            y = base.y,
-            groupSize = #groupAttackers,
-            cadence = 5,
-            distance = Distance(attackers[1], base),
-            bootstrapScore = 100
-         }) then
-            return
-         end
-      end
-   end
-
-   if groupTarget ~= nil and #groupAttackers > 1 then
-      local target = groupTarget.unit
-      if not append(KIND_MOVE_GROUP, MoveGroup(groupAttackers, target.x, target.y, target), {
-         actor = attackers[1].entityIndex,
-         target = target.entityIndex,
-         x = target.x,
-         y = target.y,
-         groupSize = #groupAttackers,
-         cadence = 5,
-         distance = Distance(attackers[1], target),
-         bootstrapScore = 160
-      }) then
-         return
-      end
-      for _, formation in ipairs({FORMATION_LINE, FORMATION_BOX, FORMATION_SPREAD}) do
-         if not append(KIND_FORMATION, {
-            kind = "formation",
-            target = target,
-            actors = groupAttackers,
-            positions = FormationPositions(world, groupAttackers, target, formation)
-         }, {
-            actor = attackers[1].entityIndex,
-            target = target.entityIndex,
-            x = target.x,
-            y = target.y,
-            groupSize = #groupAttackers,
-            formation = formation,
-            cadence = 5,
-            distance = Distance(attackers[1], target),
-            bootstrapScore = 120
-         }) then
-            return
-         end
-      end
-   end
-
-   local explorePoints = {
-      {x = 0, y = 0},
-      {x = world.width - 1, y = 0},
-      {x = 0, y = world.height - 1},
-      {x = world.width - 1, y = world.height - 1}
-   }
-   for actorIndex, actor in ipairs(attackers) do
-      if actorIndex > 64 then
-         break
-      end
-      local point = explorePoints[(actorIndex - 1) % #explorePoints + 1]
-      if not AddDirectCandidate(append, KIND_EXPLORE, actor, nil, "explore", nil, {
-         x = point.x,
-         y = point.y,
-         cadence = 5,
-         bootstrapScore = 40
-      }) then
-         return
-      end
-   end
-end
-
-local function RaceState(playerIndex)
-   local race = GetPlayerData(playerIndex, "RaceName")
-   if race == race1 then
-      return 0, HUMAN_TECH
-   end
-   return 1, ORC_TECH
+   return records, plans
 end
 
 local function PlayerTotals(playerIndex, name, resource)
@@ -1393,87 +466,80 @@ local function PlayerTotals(playerIndex, name, resource)
    return NonNegativeWord(GetPlayerData(playerIndex, name))
 end
 
-local function ShouldEmitMacro(playerIndex)
-   local macroCycles = stratagus.gameData.AIState.war1gusLastMacroCycle
-   local previousCycle = macroCycles[playerIndex]
-   if previousCycle == nil or GameCycle - previousCycle >= 30 then
-      macroCycles[playerIndex] = GameCycle
-      return true
-   end
-   return false
+local function AccrueReward(playerIndex, components)
+   local deferred = stratagus.gameData.AIState.war1gusDeferredReward
+   local accrued = deferred[playerIndex] or {
+      enemyProgress = 0, ownLoss = 0, time = 0, terminal = 0
+   }
+   accrued.enemyProgress = accrued.enemyProgress + components.enemyProgress
+   accrued.ownLoss = accrued.ownLoss + components.ownLoss
+   accrued.time = accrued.time + components.time
+   accrued.terminal = accrued.terminal + components.terminal
+   deferred[playerIndex] = accrued
 end
 
-local function BuildObservation(playerIndex, world, includeCandidates, terminal)
-   local raceId, tech = RaceState(playerIndex)
+local function BuildObservation(playerIndex, world, stage, terminal)
    local components, ownAsset, enemyAsset = RewardComponents(playerIndex, world, terminal)
-   local records = {}
-   local plans = {}
-
-   if includeCandidates then
-      local append
-      records, plans, append = CandidateSet()
-      if ShouldEmitMacro(playerIndex) then
-         AddMacroCandidates(world, tech, append)
-         AddGatherCandidates(world, append)
-      end
-      AddMicroCandidates(world, append)
-      AddSpellCandidates(world, tech, append)
+   local aiState = stratagus.gameData.AIState
+   local deferred = aiState.war1gusDeferredReward
+   if deferred == nil then
+      deferred = {}
+      aiState.war1gusDeferredReward = deferred
    end
-
+   local records, plans = {}, {}
+   if stage ~= nil then
+      records, plans = StageCandidates(playerIndex, world, stage)
+   end
+   if stage ~= nil and stage.kind ~= "actor" then
+      AccrueReward(playerIndex, components)
+      components.enemyProgress, components.ownLoss = 0, 0
+      components.time, components.terminal, components.total = 0, 0, 0
+   else
+      local accrued = deferred[playerIndex]
+      if accrued ~= nil then
+         components.enemyProgress = components.enemyProgress + accrued.enemyProgress
+         components.ownLoss = components.ownLoss + accrued.ownLoss
+         components.time = components.time + accrued.time
+         components.terminal = components.terminal + accrued.terminal
+      end
+      deferred[playerIndex] = nil
+      local penalties = aiState.war1gusRejectionPenalty
+      if penalties ~= nil then
+         components.time = components.time + (penalties[playerIndex] or 0)
+         penalties[playerIndex] = nil
+      end
+      components.total = ClampReward(components.enemyProgress + components.ownLoss +
+         components.time + components.terminal)
+   end
+   local raceId = GetPlayerData(playerIndex, "RaceName") == race1 and 0 or 1
    local state = {
-      3,
-      NonNegativeWord(playerIndex),
-      NonNegativeWord(raceId),
-      NonNegativeWord(GameCycle),
-      NonNegativeWord(world.gold),
-      NonNegativeWord(world.wood),
-      NonNegativeWord(world.supply),
-      NonNegativeWord(world.demand),
-      NonNegativeWord(world.width),
-      NonNegativeWord(world.height),
-      NonNegativeWord(#world.entities),
-      NonNegativeWord(#records),
-      NonNegativeWord(Round(ownAsset)),
-      NonNegativeWord(Round(enemyAsset)),
+      3, NonNegativeWord(playerIndex), NonNegativeWord(raceId),
+      NonNegativeWord(GameCycle), NonNegativeWord(world.gold), NonNegativeWord(world.wood),
+      NonNegativeWord(world.supply), NonNegativeWord(world.demand),
+      NonNegativeWord(world.width), NonNegativeWord(world.height),
+      NonNegativeWord(#world.entities), NonNegativeWord(#records),
+      NonNegativeWord(Round(ownAsset)), NonNegativeWord(Round(enemyAsset)),
       PlayerTotals(playerIndex, "TotalResources", "gold"),
       PlayerTotals(playerIndex, "TotalResources", "wood"),
-      PlayerTotals(playerIndex, "TotalKills"),
-      PlayerTotals(playerIndex, "TotalRazings"),
-      SignedWord(components.enemyProgress),
-      SignedWord(components.ownLoss),
-      SignedWord(components.time),
-      SignedWord(components.terminal)
+      PlayerTotals(playerIndex, "TotalKills"), PlayerTotals(playerIndex, "TotalRazings"),
+      UInt32(components.enemyProgress), UInt32(components.ownLoss),
+      UInt32(components.time), UInt32(components.terminal)
    }
-
-   for _, entity in ipairs(world.entities) do
-      AppendWords(state, EntityWords(entity))
-   end
-   for _, record in ipairs(records) do
-      AppendWords(state, record)
-   end
-
+   for _, entity in ipairs(world.entities) do AppendWords(state, EntityWords(entity)) end
+   for _, record in ipairs(records) do AppendWords(state, record) end
    return state, plans, components
 end
 
 function War1gusAiFinalState(playerIndex, terminal)
    local world = NewWorldSnapshot(playerIndex)
-   if terminal == nil then
-      terminal = TerminalOutcome(playerIndex, world)
-   end
-   local state = BuildObservation(playerIndex, world, false, terminal)
-   return state
+   return BuildObservation(playerIndex, world, nil, terminal or TerminalOutcome(playerIndex))
 end
 
 function War1gusAiTerminalReward(playerIndex, state)
-   if type(state) ~= "table" then
-      state = War1gusAiFinalState(playerIndex, TerminalOutcome(playerIndex, NewWorldSnapshot(playerIndex)))
-   end
-   return ClampReward(
-      Signed32(state[STATE_REWARD_ENEMY_PROGRESS]) +
-      Signed32(state[STATE_REWARD_OWN_LOSS]) +
-      Signed32(state[STATE_REWARD_TIME]) +
-      Signed32(state[STATE_REWARD_TERMINAL])
-   )
+   if type(state) ~= "table" then state = War1gusAiFinalState(playerIndex) end
+   return ClampReward(Signed32(state[STATE_REWARD_ENEMY_PROGRESS]) +
+      Signed32(state[STATE_REWARD_OWN_LOSS]) + Signed32(state[STATE_REWARD_TIME]) +
+      Signed32(state[STATE_REWARD_TERMINAL]))
 end
 
 local function IsEnded(playerIndex)
@@ -1481,9 +547,7 @@ local function IsEnded(playerIndex)
 end
 
 local function EndPlayer(playerIndex, terminal)
-   if IsEnded(playerIndex) then
-      return
-   end
+   if IsEnded(playerIndex) then return end
    local server = stratagus.gameData.War1gusAiServer
    local pending = server and server.pending[playerIndex]
    if pending ~= nil then
@@ -1515,165 +579,92 @@ end
 
 local function FinalizeEndedPlayers()
    local server = stratagus.gameData.War1gusAiServer
-   if server == nil then
-      return
-   end
+   if server == nil then return end
    local playerIndexes = {}
    for playerIndex, _ in pairs(server.handles) do
-      table.insert(playerIndexes, playerIndex)
+      playerIndexes[#playerIndexes + 1] = playerIndex
    end
    for _, playerIndex in ipairs(playerIndexes) do
-      local world = NewWorldSnapshot(playerIndex)
-      local terminal = TerminalOutcome(playerIndex, world)
-      if terminal ~= nil then
-         EndPlayer(playerIndex, terminal)
-      end
+      local terminal = TerminalOutcome(playerIndex)
+      if terminal ~= nil then EndPlayer(playerIndex, terminal) end
    end
 end
 
-local function PlanCommands(playerIndex, plan, world)
-   if plan == nil then
-      return nil
-   end
-   if plan.kind == "wait" then
-      return {}
-   end
-
-   local currentBySlot = {}
-   for _, unit in ipairs(world.entities) do
-      currentBySlot[unit.slot] = unit
-   end
-   local function current(original)
-      local unit = original and currentBySlot[original.slot]
-      if unit ~= nil and unit.ident == original.ident and unit.owner == original.owner
-         and world.onMapSlots[unit.slot] then
-         return unit
+local function CommandArgument(action, target)
+   if action.target == "entity" then
+      if action.verb == "cast-unit" then
+         return {spell = action.argument, target = target}
       end
-      return nil
+      return target
    end
-   local function positionValid(position)
-      return type(position) == "table" and
-         type(position[1]) == "number" and position[1] == math.floor(position[1]) and
-         type(position[2]) == "number" and position[2] == math.floor(position[2]) and
-         position[1] >= 0 and position[1] < world.width and
-         position[2] >= 0 and position[2] < world.height
-   end
-   local function targetValid(original, relation, fixedPosition)
-      local unit = current(original)
-      return unit ~= nil and unit.relation == relation and
-         (not fixedPosition or (unit.x == original.x and unit.y == original.y))
-   end
-   local function producerValid(actor, specifications, ident, field)
-      for _, specification in ipairs(specifications) do
-         if specification.ident == ident then
-            for _, producer in ipairs(specification[field]) do
-               if actor.ident == producer then
-                  return specification
-               end
-            end
-         end
+   if action.target == "position" then
+      if action.verb == "build-at" then
+         return {type = action.argument, x = target[1], y = target[2]}
+      elseif action.verb == "cast-position" then
+         return {spell = action.argument, x = target[1], y = target[2]}
       end
-      return nil
+      return target
    end
-   local function actorValid(original, verb, argument, target)
-      local actor = current(original)
-      if actor == nil or actor.owner ~= playerIndex then
-         return false
-      end
-      if verb == "attack" then
-         return actor.canAttack and targetValid(target, RELATION_ENEMY)
-      elseif verb == "move" or verb == "explore" then
-         return actor.canAttack and not actor.building and
-            (verb ~= "move" or positionValid(argument))
-      elseif verb == "resource" then
-         local resource = current(target)
-         return actor.role == "worker" and actor.idle and resource ~= nil and
-            resource.resourceKind ~= RESOURCE_NONE
-      elseif verb == "resource-location" then
-         return actor.role == "worker" and actor.idle and positionValid(argument) and
-            GetTileTerrainHasFlag(argument[1], argument[2], "forest")
-      elseif verb == "repair" then
-         local building = current(target)
-         return actor.role == "worker" and actor.idle and building ~= nil and
-            building.owner == playerIndex and building.building and
-            building.hitPoints < building.maxHitPoints
-      end
-      local _, tech = RaceState(playerIndex)
-      if verb == "build" then
-         local specification = producerValid(actor, tech.buildings, argument, "producers")
-         return (actor.idle or (actor.role == "worker" and actor.gathering)) and
-            specification ~= nil and
-            BuildSpecificationEnabled(world, specification) and CanProduce(world, argument)
-      elseif verb == "train" then
-         return actor.idle and world.demand < world.supply and
-            producerValid(actor, tech.training, argument, "producers") ~= nil and
-            CanProduce(world, argument)
-      elseif verb == "research" then
-         return actor.idle and
-            producerValid(actor, tech.research, argument, "producers") ~= nil and
-            CanResearch(world, argument)
-      elseif verb == "cast-auto" or verb == "cast-position" then
-         local spell = verb == "cast-auto" and argument or argument.spell
-         for _, specification in ipairs(tech.spells) do
-            if specification.ident == spell and
-               ((verb == "cast-position") == (specification.target == "position")) and
-               actor.mana >= specification.mana and
-               HasUpgrade(world, specification.upgrade) and
-               (verb ~= "cast-position" or
-                  positionValid({argument.x, argument.y})) then
-               for _, caster in ipairs(specification.casters) do
-                  if actor.ident == caster then
-                     return true
-                  end
-               end
-            end
-         end
-      end
-      return false
-   end
-
-   if plan.kind == "direct" then
-      if plan.target ~= nil and
-         ((plan.verb == "move" and not targetValid(plan.target, plan.target.relation, true))
-          or (plan.verb == "resource" and not targetValid(plan.target, plan.target.relation))) then
-         return nil
-      end
-      if not actorValid(plan.actor, plan.verb, plan.argument, plan.target) then
-         return nil
-      end
-      return {{actor = plan.actor.slot, verb = plan.verb, argument = plan.argument}}
-   end
-   if plan.kind ~= "group" and plan.kind ~= "formation" then
-      return nil
-   end
-   if #plan.actors < 1 or #plan.actors > MAX_BATCH_COMMANDS then
-      return nil
-   end
-   if plan.target ~= nil then
-      local relation = plan.verb == "attack" and RELATION_ENEMY or plan.target.relation
-      if not targetValid(plan.target, relation, plan.verb ~= "attack") then
-         return nil
-      end
-   end
-   local commands = {}
-   for index, actor in ipairs(plan.actors) do
-      local verb = plan.kind == "formation" and "move" or plan.verb
-      local argument = plan.kind == "formation" and
-         {plan.positions[index].x, plan.positions[index].y} or
-         (plan.targetSlot or {plan.position and plan.position.x, plan.position and plan.position.y})
-      if not actorValid(actor, verb, argument, plan.target) then
-         return nil
-      end
-      commands[index] = {actor = actor.slot, verb = verb, argument = argument}
-   end
-   return commands
+   return action.argument
 end
 
+local function PublishSelection(playerIndex, sequence, stage, target, world)
+   local actor = ActorStillPresent(world, stage.actor)
+   if actor == nil then return false, "stale-actor" end
+   if stage.action.target == "entity" then
+      local entity = TargetStillPresent(world, target)
+      if entity == nil then return false, "stale-target" end
+      target = entity.slot
+   end
+   local command = {
+      actor = actor.slot, verb = stage.action.verb,
+      argument = CommandArgument(stage.action, target)
+   }
+   if AiPublishCommandBatch(playerIndex, sequence, {command}) then return true end
+   return false, "publication-rejected"
+end
+
+local function NextStage(playerIndex, stage, choice, sequence, world)
+   if choice.kind == KIND_WAIT then return nil, true, true end
+   if choice.kind == KIND_PAGE then
+      stage.page = choice.value
+      return stage, false, true
+   end
+   if stage.kind == "actor" and choice.kind == KIND_ACTOR then
+      local actor = ActorStillPresent(world, choice.value)
+      if actor == nil then return nil, false, false end
+      return {kind = "action", actor = actor, page = 0}, false, true
+   end
+   if stage.kind == "action" and choice.kind == KIND_ACTION then
+      local action = choice.value
+      local nextStage = {
+         kind = action.target, actor = stage.actor, action = action, page = 0
+      }
+      if action.target == "position" then nextStage.kind = "x" end
+      if action.target == "none" then
+         local accepted, reason = PublishSelection(playerIndex, sequence, nextStage, nil, world)
+         return nil, true, accepted, reason
+      end
+      return nextStage, false, true
+   end
+   if stage.kind == "entity" and choice.kind == KIND_ENTITY then
+      local accepted, reason = PublishSelection(playerIndex, sequence, stage, choice.value, world)
+      return nil, true, accepted, reason
+   end
+   if stage.kind == "x" and choice.kind == KIND_X then
+      return {kind = "y", actor = stage.actor, action = stage.action,
+         x = choice.value, page = 0}, false, true
+   end
+   if stage.kind == "y" and choice.kind == KIND_Y then
+      local accepted, reason = PublishSelection(playerIndex, sequence, stage,
+         {stage.x, choice.value}, world)
+      return nil, true, accepted, reason
+   end
+   return nil, false, false
+end
 
 local function LogReward(playerIndex, components)
-   if not VERBOSE_LOGGING then
-      return
-   end
+   if not VERBOSE_LOGGING then return end
    War1gusAiLog("war1gus-ai.reward", {
       {name = "player", value = tostring(playerIndex)},
       {name = "enemy_progress", value = tostring(components.enemyProgress)},
@@ -1685,26 +676,27 @@ local function LogReward(playerIndex, components)
 end
 
 function War1gusAI()
-   if not AiExternalDecisionAuthority() then
-      return
-   end
+   if not AiExternalDecisionAuthority() then return end
    local playerIndex = AiPlayer()
    FinalizeEndedPlayers()
-   if IsEnded(playerIndex) then
-      return
-   end
-
+   if IsEnded(playerIndex) then return end
    local world = NewWorldSnapshot(playerIndex)
-   local terminal = TerminalOutcome(playerIndex, world)
+   local terminal = TerminalOutcome(playerIndex)
    if terminal ~= nil then
       EndPlayer(playerIndex, terminal)
       return
    end
 
+   local aiState = stratagus.gameData.AIState
+   local stages = aiState.war1gusSelectionStages
+   if stages == nil then
+      stages = {}
+      aiState.war1gusSelectionStages = stages
+   end
    local async = War1gusAiAsyncMode()
    local server = stratagus.gameData.War1gusAiServer
    local pending = async and server and server.pending[playerIndex] or nil
-   local selected, plans, sequence
+   local selected, plans, sequence, stage
    if pending ~= nil then
       if pending.server ~= server or pending.epoch ~= server.epoch or
          server.handles[playerIndex] ~= pending.handle then
@@ -1716,6 +708,7 @@ function War1gusAI()
             {name = "reason", value = JsonString("epoch-changed")}
          })
          server.pending[playerIndex] = nil
+         stages[playerIndex] = nil
          return
       end
       if (GameCycle < pending.cycle or GameCycle - pending.cycle > MAX_ASYNC_RESPONSE_AGE)
@@ -1728,16 +721,12 @@ function War1gusAI()
             {name = "response_cycle", value = tostring(GameCycle)},
             {name = "reason", value = JsonString("response-expired")}
          })
-         -- Drain the old frame before issuing another sequence. Julia may
-         -- already have selected and cached its response on this connection.
+         -- Drain the old response before requesting another sequence.
       end
       if pending.failed then
          local restarted = AiProcessorBegin(
-            pending.handle, pending.reward, pending.state, #pending.plans
-         )
-         if restarted == nil then
-            return
-         end
+            pending.handle, pending.reward, pending.state, #pending.plans)
+         if restarted == nil then return end
          if restarted ~= pending.sequence then
             War1gusAiLog("war1gus-ai.discard", {
                {name = "player", value = tostring(playerIndex)},
@@ -1746,6 +735,7 @@ function War1gusAI()
                {name = "response_cycle", value = tostring(GameCycle)},
                {name = "reason", value = JsonString("retry-sequence-mismatch")}
             })
+            stages[playerIndex] = nil
             EndWar1gusAiProcessor(playerIndex)
             return
          end
@@ -1754,9 +744,7 @@ function War1gusAI()
       end
       local status
       status, sequence, selected = AiProcessorPoll(pending.handle)
-      if status == "pending" then
-         return
-      end
+      if status == "pending" then return end
       if status == "failed" then
          pending.failed = true
          return
@@ -1769,14 +757,16 @@ function War1gusAI()
             {name = "response_cycle", value = tostring(GameCycle)},
             {name = "reason", value = JsonString(status ~= "ready" and "poll-status" or "sequence-mismatch")}
          })
+         stages[playerIndex] = nil
          EndWar1gusAiProcessor(playerIndex)
          return
       end
       server.pending[playerIndex] = nil
       if pending.expired then
+         stages[playerIndex] = nil
          return
       end
-      plans = pending.plans
+      plans, stage = pending.plans, pending.stage
       War1gusAiLog("war1gus-ai.response", {
          {name = "player", value = tostring(playerIndex)},
          {name = "sequence", value = tostring(sequence)},
@@ -1786,11 +776,14 @@ function War1gusAI()
          {name = "selection", value = JsonString(tostring(selected))}
       })
    else
+      stage = NewStage(stages[playerIndex], world)
+      stages[playerIndex] = stage
       local state, components
-      state, plans, components = BuildObservation(playerIndex, world, true, nil)
+      state, plans, components = BuildObservation(playerIndex, world, stage, nil)
       LogReward(playerIndex, components)
       local handle = GetWar1gusAiProcessor(playerIndex, state)
       if handle == nil then
+         if stage.kind == "actor" then AccrueReward(playerIndex, components) end
          War1gusAiLog("war1gus-ai.lifecycle", {
             {name = "player", value = tostring(playerIndex)},
             {name = "event", value = JsonString("processor-unavailable")}
@@ -1801,18 +794,14 @@ function War1gusAI()
          sequence = AiProcessorBegin(handle, components.total, state, #plans)
          if type(sequence) ~= "number" or sequence ~= math.floor(sequence) or
             sequence < 0 or sequence >= UINT32_MODULUS then
+            if stage.kind == "actor" then AccrueReward(playerIndex, components) end
             return
          end
          server = stratagus.gameData.War1gusAiServer
          server.pending[playerIndex] = {
-            server = server,
-            epoch = server.epoch,
-            handle = handle,
-            reward = components.total,
-            state = state,
-            plans = plans,
-            sequence = sequence,
-            cycle = GameCycle
+            server = server, epoch = server.epoch, handle = handle,
+            reward = components.total, state = state, plans = plans,
+            stage = stage, sequence = sequence, cycle = GameCycle
          }
          War1gusAiLog("war1gus-ai.request", {
             {name = "player", value = tostring(playerIndex)},
@@ -1842,27 +831,35 @@ function War1gusAI()
          {name = "selection", value = JsonString(tostring(selected))},
          {name = "candidate_count", value = tostring(#plans)}
       })
+      stages[playerIndex] = nil
       return
    end
 
-   local plan = plans[selected]
-   local commands = PlanCommands(playerIndex, plan, world)
-   local accepted = commands ~= nil and
-      (#commands == 0 or AiPublishCommandBatch(playerIndex, sequence, commands))
+   local nextStage, completed, accepted, reason =
+      NextStage(playerIndex, stage, plans[selected], sequence, world)
+   stages[playerIndex] = nextStage
+   if completed and reason == "publication-rejected" then
+      local penalties = aiState.war1gusRejectionPenalty
+      if penalties == nil then
+         penalties = {}
+         aiState.war1gusRejectionPenalty = penalties
+      end
+      penalties[playerIndex] = math.max(-1000, (penalties[playerIndex] or 0) + REJECTION_REWARD)
+   end
    if async and not accepted then
       War1gusAiLog("war1gus-ai.discard", {
          {name = "player", value = tostring(playerIndex)},
          {name = "sequence", value = tostring(sequence)},
          {name = "observation_cycle", value = tostring(pending.cycle)},
          {name = "response_cycle", value = tostring(GameCycle)},
-         {name = "reason", value = JsonString(commands == nil and "stale-plan" or "publication-rejected")}
+         {name = "reason", value = JsonString(reason or "stale-selection")}
       })
    end
    if VERBOSE_LOGGING then
       War1gusAiLog("war1gus-ai.action", {
          {name = "player", value = tostring(playerIndex)},
          {name = "candidate", value = tostring(selected - 1)},
-         {name = "kind", value = JsonString(KIND_NAMES[plan.candidateKind])},
+         {name = "kind", value = tostring(plans[selected].kind)},
          {name = "accepted", value = tostring(accepted)}
       })
    end
