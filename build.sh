@@ -4,6 +4,18 @@
 # if run with no stage specified, all builds will run
 
 stage="${1:-}"
+war1gus_root=$PWD
+
+sync_runtime() {
+  local data_dir="${WAR1GUS_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/stratagus/data.War1gus}"
+  if [ ! -f "$data_dir/war1data" ]; then
+    echo "Skipping runtime sync: no extracted war1data marker in $data_dir"
+    return 0
+  fi
+  cmake "-DWAR1GUS_SOURCE_DIR=$war1gus_root" "-DWAR1GUS_DATA_DIR=$data_dir" \
+    -P "$war1gus_root/cmake/sync-runtime.cmake"
+}
+
 
 git submodule init && \
 git submodule sync && \
@@ -45,7 +57,7 @@ if [ -z "$stage" ]; then
     -DENABLE_VENDORED_LIBS=OFF && \
   cmake --build build --config Release && \
   cmake -E copy_directory stratagus/build/freepats build/freepats && \
-  cd build && sudo make install
+  cd build && sudo make install && sync_runtime
 elif [ "$stage" = "Stratagus" ]; then
   cd stratagus && \
   git submodule init && \
@@ -73,5 +85,5 @@ elif [ "$stage" = "War1gus" ]; then
     -DENABLE_VENDORED_LIBS=OFF && \
   cmake --build build --config Release && \
   cmake -E copy_directory stratagus/build/freepats build/freepats && \
-  cd build && sudo make install
+  cd build && sudo make install && sync_runtime
 fi
