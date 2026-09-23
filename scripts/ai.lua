@@ -535,6 +535,10 @@ local function War1gusAiMode()
    return mode
 end
 local war1gusAiMode = War1gusAiMode()
+function War1gusAiAsyncMode()
+   return war1gusAiMode == nil
+end
+local war1gusAiEpoch = 0
 local function War1gusAiFileExists(path)
    local file = io.open(path, "rb")
    if file == nil then
@@ -614,20 +618,47 @@ local function CloseWar1gusAiServer()
       return
    end
 
+   server.epoch = server.epoch + 1
    for playerIndex, handle in pairs(server.handles) do
-      local state = server.states[playerIndex]
-      if War1gusAiFinalState ~= nil then
-         local ok, finalState = pcall(War1gusAiFinalState, playerIndex)
-         if ok and type(finalState) == "table" then
-            state = finalState
+      if War1gusAiAsyncMode() then
+         local pending = server.pending[playerIndex]
+         if pending ~= nil and War1gusAiLog ~= nil then
+            War1gusAiLog("war1gus-ai.discard", {
+               {name = "player", value = tostring(playerIndex)},
+               {name = "sequence", value = tostring(pending.sequence)},
+               {name = "observation_cycle", value = tostring(pending.cycle)},
+               {name = "response_cycle", value = tostring(GameCycle or 0)},
+               {name = "reason", value = "\"map-cleanup\""}
+            })
          end
-      end
-      if type(state) == "table" then
-         state = War1gusAiTerminalState(state)
-         pcall(AiProcessorEnd, handle, War1gusAiTerminalReward(playerIndex, state), state)
+         pcall(AiProcessorCancel, handle)
+         pcall(AiProcessorEnd, handle)
+      else
+         local state = server.states[playerIndex]
+         if War1gusAiFinalState ~= nil then
+            local ok, finalState = pcall(War1gusAiFinalState, playerIndex)
+            if ok and type(finalState) == "table" then
+               state = finalState
+            end
+         end
+         if type(state) == "table" then
+            local terminalState = War1gusAiTerminalState(state)
+            local ok, delivered = pcall(
+               AiProcessorEnd, handle, War1gusAiTerminalReward(playerIndex, terminalState), terminalState
+            )
+            if (not ok or not delivered) and War1gusAiLog ~= nil then
+               War1gusAiLog("war1gus-ai.lifecycle", {
+                  {name = "player", value = tostring(playerIndex)},
+                  {name = "event", value = "\"terminal-delivery-failed\""}
+               })
+            end
+         else
+            pcall(AiProcessorEnd, handle)
+         end
       end
    end
    server.handles = {}
+   server.pending = {}
    server.states = {}
    server.process:close()
    stratagus.gameData.War1gusAiServer = nil
@@ -653,11 +684,14 @@ function StartWar1gusAiServer()
       if war1gusAiMode == "reset-train" then
          war1gusAiMode = "train"
       end
+      war1gusAiEpoch = war1gusAiEpoch + 1
       server = {
          process = process,
          host = host,
          port = port,
+         epoch = war1gusAiEpoch,
          handles = {},
+         pending = {},
          states = {}
       }
       stratagus.gameData.War1gusAiServer = server
@@ -704,8 +738,20 @@ function EndWar1gusAiProcessor(playerIndex, reward, state)
       return false
    end
    server.handles[playerIndex] = nil
+   server.pending[playerIndex] = nil
    server.states[playerIndex] = nil
-   pcall(AiProcessorEnd, handle, reward, state)
+   if War1gusAiAsyncMode() then
+      pcall(AiProcessorCancel, handle)
+      pcall(AiProcessorEnd, handle)
+   else
+      local ok, delivered = pcall(AiProcessorEnd, handle, reward, state)
+      if (not ok or not delivered) and War1gusAiLog ~= nil then
+         War1gusAiLog("war1gus-ai.lifecycle", {
+            {name = "player", value = tostring(playerIndex)},
+            {name = "event", value = "\"terminal-delivery-failed\""}
+         })
+      end
+   end
    return true
 end
 

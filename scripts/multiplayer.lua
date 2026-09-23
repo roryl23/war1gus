@@ -18,6 +18,7 @@ local function usage()
   print("Server startup file for War1gus options. Options are passed as comma-separated pairs")
   print("\t[server|client]")
   print("\t[numplayers=[number of connections to wait for before game starts]]")
+  print("\t[ai=[number of computer players]] -- only valid for server")
   print("\t[ip=server-ip] -- only valid for client")
   print("\t[port=server-port] -- only valid for client")
   print("\t[race=(orc|human)]")
@@ -48,6 +49,7 @@ else
   local mapfile = string.match(ARGS, "map=([^,]+)")
   local nickname = string.match(ARGS, "player=([^,]+)")
   local numplayers = tonumber(string.match(ARGS, "numplayers=([^,]+)"))
+  local aiPlayers = tonumber(string.match(ARGS, "ai=([^,]+)")) or 0
   local fow = tonumber(string.match(ARGS, "fow=([^,]+)"))
   local reveal = tonumber(string.match(ARGS, "reveal=([^,]+)"))
 
@@ -95,6 +97,7 @@ else
       RunServerMultiGameMenu(mapfile, description, playerCount,
         {race = racename,
           autostartNum = numplayers,
+          aiPlayerNum = aiPlayers,
           resources = resources,
           units = units,
           fow = fow,

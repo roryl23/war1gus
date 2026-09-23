@@ -24,6 +24,8 @@ local STATE_REWARD_TERMINAL = 22
 local ENTITY_WORDS = 14
 local CANDIDATE_WORDS = 12
 local MAX_CANDIDATES = 512
+local MAX_BATCH_COMMANDS = 32
+local MAX_ASYNC_RESPONSE_AGE = 499
 local UINT32_MODULUS = 4294967296
 local INT32_SIGN = 2147483648
 
@@ -872,6 +874,7 @@ local function AddDirectCandidate(append, kind, actor, target, verb, argument, f
    return append(kind, {
       kind = "direct",
       actor = actor,
+      target = target,
       verb = verb,
       argument = argument
    }, fields)
@@ -1176,11 +1179,12 @@ local function AttackGroup(attackers, target)
       kind = "group",
       actors = group,
       verb = "attack",
-      targetSlot = target.slot
+      targetSlot = target.slot,
+      target = target
    }
 end
 
-local function MoveGroup(attackers, x, y)
+local function MoveGroup(attackers, x, y, target)
    local group = {}
    for _, actor in ipairs(attackers) do
       table.insert(group, actor)
@@ -1189,6 +1193,7 @@ local function MoveGroup(attackers, x, y)
       kind = "group",
       actors = group,
       verb = "move",
+      target = target,
       position = {x = x, y = y}
    }
 end
@@ -1218,6 +1223,10 @@ end
 local function AddMicroCandidates(world, append)
    local workers = IdleUnits(world.commandWorkers)
    local attackers = world.commandAttackers
+   local groupAttackers = {}
+   for index = 1, math.min(#attackers, MAX_BATCH_COMMANDS) do
+      groupAttackers[index] = attackers[index]
+   end
 
    local damagedBuildings = {}
    for _, building in ipairs(world.commandOwnBuildings) do
@@ -1264,11 +1273,11 @@ local function AddMicroCandidates(world, append)
    end
 
    local groupTarget = attackers[1] ~= nil and ClosestUnit(attackers[1], targets) or nil
-   if #attackers > 1 and groupTarget ~= nil then
-      if not append(KIND_ATTACK_ENTITY, AttackGroup(attackers, groupTarget.unit), {
+   if #groupAttackers > 1 and groupTarget ~= nil then
+      if not append(KIND_ATTACK_ENTITY, AttackGroup(groupAttackers, groupTarget.unit), {
          actor = attackers[1].entityIndex,
          target = groupTarget.unit.entityIndex,
-         groupSize = #attackers,
+         groupSize = #groupAttackers,
          cadence = 5,
          distance = Distance(attackers[1], groupTarget.unit),
          bootstrapScore = groupTarget.unit.building and 180 or 240
@@ -1292,13 +1301,13 @@ local function AddMicroCandidates(world, append)
             return
          end
       end
-      if #attackers > 1 then
-         if not append(KIND_DEFEND, MoveGroup(attackers, base.x, base.y), {
+      if #groupAttackers > 1 then
+         if not append(KIND_DEFEND, MoveGroup(groupAttackers, base.x, base.y, base), {
             actor = attackers[1].entityIndex,
             target = base.entityIndex,
             x = base.x,
             y = base.y,
-            groupSize = #attackers,
+            groupSize = #groupAttackers,
             cadence = 5,
             distance = Distance(attackers[1], base),
             bootstrapScore = 100
@@ -1308,14 +1317,14 @@ local function AddMicroCandidates(world, append)
       end
    end
 
-   if groupTarget ~= nil and #attackers > 1 then
+   if groupTarget ~= nil and #groupAttackers > 1 then
       local target = groupTarget.unit
-      if not append(KIND_MOVE_GROUP, MoveGroup(attackers, target.x, target.y), {
+      if not append(KIND_MOVE_GROUP, MoveGroup(groupAttackers, target.x, target.y, target), {
          actor = attackers[1].entityIndex,
          target = target.entityIndex,
          x = target.x,
          y = target.y,
-         groupSize = #attackers,
+         groupSize = #groupAttackers,
          cadence = 5,
          distance = Distance(attackers[1], target),
          bootstrapScore = 160
@@ -1325,14 +1334,15 @@ local function AddMicroCandidates(world, append)
       for _, formation in ipairs({FORMATION_LINE, FORMATION_BOX, FORMATION_SPREAD}) do
          if not append(KIND_FORMATION, {
             kind = "formation",
-            actors = attackers,
-            positions = FormationPositions(world, attackers, target, formation)
+            target = target,
+            actors = groupAttackers,
+            positions = FormationPositions(world, groupAttackers, target, formation)
          }, {
             actor = attackers[1].entityIndex,
             target = target.entityIndex,
             x = target.x,
             y = target.y,
-            groupSize = #attackers,
+            groupSize = #groupAttackers,
             formation = formation,
             cadence = 5,
             distance = Distance(attackers[1], target),
@@ -1471,6 +1481,17 @@ local function EndPlayer(playerIndex, terminal)
    if IsEnded(playerIndex) then
       return
    end
+   local server = stratagus.gameData.War1gusAiServer
+   local pending = server and server.pending[playerIndex]
+   if pending ~= nil then
+      War1gusAiLog("war1gus-ai.discard", {
+         {name = "player", value = tostring(playerIndex)},
+         {name = "sequence", value = tostring(pending.sequence)},
+         {name = "observation_cycle", value = tostring(pending.cycle)},
+         {name = "response_cycle", value = tostring(GameCycle)},
+         {name = "reason", value = JsonString("terminal")}
+      })
+   end
    local state = War1gusAiFinalState(playerIndex, terminal)
    local reward = War1gusAiTerminalReward(playerIndex, state)
    War1gusAiLog("war1gus-ai.reward", {
@@ -1507,39 +1528,143 @@ local function FinalizeEndedPlayers()
    end
 end
 
-local function ExecutePlan(playerIndex, plan)
-   if plan == nil or plan.kind == "wait" then
-      return true
+local function PlanCommands(playerIndex, plan, world)
+   if plan == nil then
+      return nil
    end
-   if plan.kind == "direct" then
-      if plan.argument == nil then
-         return AiDirectCommand(playerIndex, plan.actor.slot, plan.verb)
+   if plan.kind == "wait" then
+      return {}
+   end
+
+   local currentBySlot = {}
+   for _, unit in ipairs(world.entities) do
+      currentBySlot[unit.slot] = unit
+   end
+   local function current(original)
+      local unit = original and currentBySlot[original.slot]
+      if unit ~= nil and unit.ident == original.ident and unit.owner == original.owner
+         and world.onMapSlots[unit.slot] then
+         return unit
       end
-      return AiDirectCommand(playerIndex, plan.actor.slot, plan.verb, plan.argument)
+      return nil
    end
-   local issued = false
-   if plan.kind == "group" then
-      for _, actor in ipairs(plan.actors) do
-         local accepted
-         if plan.targetSlot ~= nil then
-            accepted = AiDirectCommand(playerIndex, actor.slot, plan.verb, plan.targetSlot)
-         else
-            accepted = AiDirectCommand(playerIndex, actor.slot, plan.verb, {plan.position.x, plan.position.y})
+   local function positionValid(position)
+      return type(position) == "table" and
+         type(position[1]) == "number" and position[1] == math.floor(position[1]) and
+         type(position[2]) == "number" and position[2] == math.floor(position[2]) and
+         position[1] >= 0 and position[1] < world.width and
+         position[2] >= 0 and position[2] < world.height
+   end
+   local function targetValid(original, relation, fixedPosition)
+      local unit = current(original)
+      return unit ~= nil and unit.relation == relation and
+         (not fixedPosition or (unit.x == original.x and unit.y == original.y))
+   end
+   local function producerValid(actor, specifications, ident, field)
+      for _, specification in ipairs(specifications) do
+         if specification.ident == ident then
+            for _, producer in ipairs(specification[field]) do
+               if actor.ident == producer then
+                  return specification
+               end
+            end
          end
-         issued = accepted or issued
       end
-      return issued
+      return nil
    end
-   if plan.kind == "formation" then
-      for index, actor in ipairs(plan.actors) do
-         local position = plan.positions[index]
-         local accepted = AiDirectCommand(playerIndex, actor.slot, "move", {position.x, position.y})
-         issued = accepted or issued
+   local function actorValid(original, verb, argument, target)
+      local actor = current(original)
+      if actor == nil or actor.owner ~= playerIndex then
+         return false
       end
-      return issued
+      if verb == "attack" then
+         return actor.canAttack and targetValid(target, RELATION_ENEMY)
+      elseif verb == "move" or verb == "explore" then
+         return actor.canAttack and not actor.building and
+            (verb ~= "move" or positionValid(argument))
+      elseif verb == "resource" then
+         local resource = current(target)
+         return actor.role == "worker" and actor.idle and resource ~= nil and
+            resource.resourceKind ~= RESOURCE_NONE
+      elseif verb == "resource-location" then
+         return actor.role == "worker" and actor.idle and positionValid(argument) and
+            GetTileTerrainHasFlag(argument[1], argument[2], "forest")
+      elseif verb == "repair" then
+         local building = current(target)
+         return actor.role == "worker" and actor.idle and building ~= nil and
+            building.owner == playerIndex and building.building and
+            building.hitPoints < building.maxHitPoints
+      end
+      local _, tech = RaceState(playerIndex)
+      if verb == "build" then
+         local specification = producerValid(actor, tech.buildings, argument, "producers")
+         return actor.idle and specification ~= nil and
+            BuildSpecificationEnabled(world, specification) and CanProduce(world, argument)
+      elseif verb == "train" then
+         return actor.idle and world.demand < world.supply and
+            producerValid(actor, tech.training, argument, "producers") ~= nil and
+            CanProduce(world, argument)
+      elseif verb == "research" then
+         return actor.idle and
+            producerValid(actor, tech.research, argument, "producers") ~= nil and
+            CanResearch(world, argument)
+      elseif verb == "cast-auto" or verb == "cast-position" then
+         local spell = verb == "cast-auto" and argument or argument.spell
+         for _, specification in ipairs(tech.spells) do
+            if specification.ident == spell and
+               ((verb == "cast-position") == (specification.target == "position")) and
+               actor.mana >= specification.mana and
+               HasUpgrade(world, specification.upgrade) and
+               (verb ~= "cast-position" or
+                  positionValid({argument.x, argument.y})) then
+               for _, caster in ipairs(specification.casters) do
+                  if actor.ident == caster then
+                     return true
+                  end
+               end
+            end
+         end
+      end
+      return false
    end
-   return false
+
+   if plan.kind == "direct" then
+      if plan.target ~= nil and
+         ((plan.verb == "move" and not targetValid(plan.target, plan.target.relation, true))
+          or (plan.verb == "resource" and not targetValid(plan.target, plan.target.relation))) then
+         return nil
+      end
+      if not actorValid(plan.actor, plan.verb, plan.argument, plan.target) then
+         return nil
+      end
+      return {{actor = plan.actor.slot, verb = plan.verb, argument = plan.argument}}
+   end
+   if plan.kind ~= "group" and plan.kind ~= "formation" then
+      return nil
+   end
+   if #plan.actors < 1 or #plan.actors > MAX_BATCH_COMMANDS then
+      return nil
+   end
+   if plan.target ~= nil then
+      local relation = plan.verb == "attack" and RELATION_ENEMY or plan.target.relation
+      if not targetValid(plan.target, relation, plan.verb ~= "attack") then
+         return nil
+      end
+   end
+   local commands = {}
+   for index, actor in ipairs(plan.actors) do
+      local verb = plan.kind == "formation" and "move" or plan.verb
+      local argument = plan.kind == "formation" and
+         {plan.positions[index].x, plan.positions[index].y} or
+         (plan.targetSlot or {plan.position and plan.position.x, plan.position and plan.position.y})
+      if not actorValid(actor, verb, argument, plan.target) then
+         return nil
+      end
+      commands[index] = {actor = actor.slot, verb = verb, argument = argument}
+   end
+   return commands
 end
+
 
 local function LogReward(playerIndex, components)
    if not VERBOSE_LOGGING then
@@ -1556,6 +1681,9 @@ local function LogReward(playerIndex, components)
 end
 
 function War1gusAI()
+   if not AiExternalDecisionAuthority() then
+      return
+   end
    local playerIndex = AiPlayer()
    FinalizeEndedPlayers()
    if IsEnded(playerIndex) then
@@ -1569,19 +1697,141 @@ function War1gusAI()
       return
    end
 
-   local state, plans, components = BuildObservation(playerIndex, world, true, nil)
-   LogReward(playerIndex, components)
-   local handle = GetWar1gusAiProcessor(playerIndex, state)
-   if handle == nil then
-      War1gusAiLog("war1gus-ai.lifecycle", {
+   local async = War1gusAiAsyncMode()
+   local server = stratagus.gameData.War1gusAiServer
+   local pending = async and server and server.pending[playerIndex] or nil
+   local selected, plans, sequence
+   if pending ~= nil then
+      if pending.server ~= server or pending.epoch ~= server.epoch or
+         server.handles[playerIndex] ~= pending.handle then
+         War1gusAiLog("war1gus-ai.discard", {
+            {name = "player", value = tostring(playerIndex)},
+            {name = "sequence", value = tostring(pending.sequence)},
+            {name = "observation_cycle", value = tostring(pending.cycle)},
+            {name = "response_cycle", value = tostring(GameCycle)},
+            {name = "reason", value = JsonString("epoch-changed")}
+         })
+         server.pending[playerIndex] = nil
+         return
+      end
+      if (GameCycle < pending.cycle or GameCycle - pending.cycle > MAX_ASYNC_RESPONSE_AGE)
+         and not pending.expired then
+         pending.expired = true
+         War1gusAiLog("war1gus-ai.discard", {
+            {name = "player", value = tostring(playerIndex)},
+            {name = "sequence", value = tostring(pending.sequence)},
+            {name = "observation_cycle", value = tostring(pending.cycle)},
+            {name = "response_cycle", value = tostring(GameCycle)},
+            {name = "reason", value = JsonString("response-expired")}
+         })
+         -- Drain the old frame before issuing another sequence. Julia may
+         -- already have selected and cached its response on this connection.
+      end
+      if pending.failed then
+         local restarted = AiProcessorBegin(
+            pending.handle, pending.reward, pending.state, #pending.plans
+         )
+         if restarted == nil then
+            return
+         end
+         if restarted ~= pending.sequence then
+            War1gusAiLog("war1gus-ai.discard", {
+               {name = "player", value = tostring(playerIndex)},
+               {name = "sequence", value = tostring(pending.sequence)},
+               {name = "observation_cycle", value = tostring(pending.cycle)},
+               {name = "response_cycle", value = tostring(GameCycle)},
+               {name = "reason", value = JsonString("retry-sequence-mismatch")}
+            })
+            EndWar1gusAiProcessor(playerIndex)
+            return
+         end
+         pending.failed = false
+         return
+      end
+      local status
+      status, sequence, selected = AiProcessorPoll(pending.handle)
+      if status == "pending" then
+         return
+      end
+      if status == "failed" then
+         pending.failed = true
+         return
+      end
+      if status ~= "ready" or sequence ~= pending.sequence then
+         War1gusAiLog("war1gus-ai.discard", {
+            {name = "player", value = tostring(playerIndex)},
+            {name = "sequence", value = tostring(pending.sequence)},
+            {name = "observation_cycle", value = tostring(pending.cycle)},
+            {name = "response_cycle", value = tostring(GameCycle)},
+            {name = "reason", value = JsonString(status ~= "ready" and "poll-status" or "sequence-mismatch")}
+         })
+         EndWar1gusAiProcessor(playerIndex)
+         return
+      end
+      server.pending[playerIndex] = nil
+      if pending.expired then
+         return
+      end
+      plans = pending.plans
+      War1gusAiLog("war1gus-ai.response", {
          {name = "player", value = tostring(playerIndex)},
-         {name = "event", value = JsonString("processor-unavailable")}
+         {name = "sequence", value = tostring(sequence)},
+         {name = "observation_cycle", value = tostring(pending.cycle)},
+         {name = "response_cycle", value = tostring(GameCycle)},
+         {name = "latency", value = tostring(GameCycle - pending.cycle)},
+         {name = "selection", value = JsonString(tostring(selected))}
       })
-      return
+   else
+      local state, components
+      state, plans, components = BuildObservation(playerIndex, world, true, nil)
+      LogReward(playerIndex, components)
+      local handle = GetWar1gusAiProcessor(playerIndex, state)
+      if handle == nil then
+         War1gusAiLog("war1gus-ai.lifecycle", {
+            {name = "player", value = tostring(playerIndex)},
+            {name = "event", value = JsonString("processor-unavailable")}
+         })
+         return
+      end
+      if async then
+         sequence = AiProcessorBegin(handle, components.total, state, #plans)
+         if type(sequence) ~= "number" or sequence ~= math.floor(sequence) or
+            sequence < 0 or sequence >= UINT32_MODULUS then
+            return
+         end
+         server = stratagus.gameData.War1gusAiServer
+         server.pending[playerIndex] = {
+            server = server,
+            epoch = server.epoch,
+            handle = handle,
+            reward = components.total,
+            state = state,
+            plans = plans,
+            sequence = sequence,
+            cycle = GameCycle
+         }
+         War1gusAiLog("war1gus-ai.request", {
+            {name = "player", value = tostring(playerIndex)},
+            {name = "sequence", value = tostring(sequence)},
+            {name = "observation_cycle", value = tostring(GameCycle)},
+            {name = "candidate_count", value = tostring(#plans)}
+         })
+         return
+      end
+      selected, sequence = AiProcessorStep(handle, components.total, state, #plans)
    end
 
-   local selected = AiProcessorStep(handle, components.total, state, #plans)
-   if type(selected) ~= "number" or selected ~= math.floor(selected) or selected < 1 or selected > #plans then
+   if type(selected) ~= "number" or selected ~= math.floor(selected) or
+      selected < 1 or selected > #plans then
+      if async then
+         War1gusAiLog("war1gus-ai.discard", {
+            {name = "player", value = tostring(playerIndex)},
+            {name = "sequence", value = tostring(sequence)},
+            {name = "observation_cycle", value = tostring(pending.cycle)},
+            {name = "response_cycle", value = tostring(GameCycle)},
+            {name = "reason", value = JsonString("invalid-selection")}
+         })
+      end
       War1gusAiLog("war1gus-ai.action", {
          {name = "player", value = tostring(playerIndex)},
          {name = "event", value = JsonString("invalid-selection")},
@@ -1592,7 +1842,18 @@ function War1gusAI()
    end
 
    local plan = plans[selected]
-   local accepted = ExecutePlan(playerIndex, plan)
+   local commands = PlanCommands(playerIndex, plan, world)
+   local accepted = commands ~= nil and
+      (#commands == 0 or AiPublishCommandBatch(playerIndex, sequence, commands))
+   if async and not accepted then
+      War1gusAiLog("war1gus-ai.discard", {
+         {name = "player", value = tostring(playerIndex)},
+         {name = "sequence", value = tostring(sequence)},
+         {name = "observation_cycle", value = tostring(pending.cycle)},
+         {name = "response_cycle", value = tostring(GameCycle)},
+         {name = "reason", value = JsonString(commands == nil and "stale-plan" or "publication-rejected")}
+      })
+   end
    if VERBOSE_LOGGING then
       War1gusAiLog("war1gus-ai.action", {
          {name = "player", value = tostring(playerIndex)},
