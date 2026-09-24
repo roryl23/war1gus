@@ -380,7 +380,10 @@ end
 local function ActionsForActor(playerIndex, actor)
    local actions = {}
    for _, action in ipairs(PRIMITIVE_ACTIONS) do
-      actions[#actions + 1] = action
+      if actor.role == 1 or
+         (action.verb ~= "resource" and action.verb ~= "resource-location") then
+         actions[#actions + 1] = action
+      end
    end
    for _, entry in ipairs(AiActionCatalog(playerIndex)) do
       if entry.actor == actor.ident then
@@ -431,6 +434,11 @@ local function GoldMines(world)
       if unit.resourceKind == RESOURCE_GOLD then mines[#mines + 1] = unit end
    end
    return mines
+end
+
+local function HarvestableMine(unit)
+   return unit.resourceKind == RESOURCE_GOLD and unit.hp > 0 and
+      Number(GetUnitVariable(unit.slot, "ResourcesHeld")) > 0
 end
 
 local function NearGoldMine(mines, x, y)
@@ -484,6 +492,28 @@ local function OpeningSiteLegal(playerIndex, stage, x, y)
    return AiCanBuildAt(playerIndex, stage.actor.slot, stage.action.argument, {x, y})
 end
 
+local function ForestSites(world, stage)
+   local sites = stage.forestSites
+   if sites ~= nil and sites.width == world.width and sites.height == world.height then
+      return sites, false
+   end
+   sites = {width = world.width, height = world.height, xs = {}, byX = {}}
+   for x = 0, world.width - 1 do
+      local ys = {}
+      for y = 0, world.height - 1 do
+         if GetTileTerrainHasFlag(x, y, "forest") then
+            ys[#ys + 1] = y
+         end
+      end
+      if #ys > 0 then
+         sites.xs[#sites.xs + 1] = x
+         sites.byX[x] = ys
+      end
+   end
+   stage.forestSites = sites
+   return sites, true
+end
+
 local function NewStage(stage, world)
    if stage == nil or stage.kind == "actor" then
       return {kind = "actor", page = stage and stage.page or 0}
@@ -523,10 +553,13 @@ local function StageOptions(playerIndex, world, stage)
       end
    elseif stage.kind == "entity" then
       for _, entity in ipairs(world.entities) do
-         options[#options + 1] = {
-            kind = KIND_ENTITY, actor = actorIndex, target = entity.entityIndex,
-            hash = actionHash, value = entity
-         }
+         if stage.action.verb ~= "resource" or
+            (stage.actor.role == 1 and HarvestableMine(entity)) then
+            options[#options + 1] = {
+               kind = KIND_ENTITY, actor = actorIndex, target = entity.entityIndex,
+               hash = actionHash, value = entity
+            }
+         end
       end
    elseif stage.kind == "x" then
       if stage.openingBuild then
@@ -559,6 +592,21 @@ local function StageOptions(playerIndex, world, stage)
                }
             end
          end
+      elseif stage.action.verb == "resource-location" then
+         if stage.actor.role == 1 then
+            local sites, fresh = ForestSites(world, stage)
+            for _, x in ipairs(sites.xs) do
+               for _, y in ipairs(sites.byX[x]) do
+                  if fresh or GetTileTerrainHasFlag(x, y, "forest") then
+                     options[#options + 1] = {
+                        kind = KIND_X, actor = actorIndex, hash = actionHash,
+                        x = x, value = x
+                     }
+                     break
+                  end
+               end
+            end
+         end
       else
          for x = 0, world.width - 1 do
             options[#options + 1] = {
@@ -580,6 +628,17 @@ local function StageOptions(playerIndex, world, stage)
                   preferred = LocalOpeningSite(mines, stage.actor, nearestMineDistance, stage.x, y)
                      and 2 or 0
                }
+            end
+         end
+      elseif stage.action.verb == "resource-location" then
+         if stage.actor.role == 1 then
+            for _, y in ipairs(ForestSites(world, stage).byX[stage.x] or {}) do
+               if GetTileTerrainHasFlag(stage.x, y, "forest") then
+                  options[#options + 1] = {
+                     kind = KIND_Y, actor = actorIndex, hash = actionHash,
+                     x = stage.x, y = y, value = y
+                  }
+               end
             end
          end
       else
@@ -789,9 +848,20 @@ end
 local function PublishSelection(playerIndex, sequence, stage, target, world)
    local actor = ActorStillPresent(world, stage.actor)
    if actor == nil then return false, "stale-actor" end
+   if (stage.action.verb == "resource" or stage.action.verb == "resource-location")
+      and actor.role ~= 1 then
+      return false, "invalid-harvester"
+   end
+   if stage.action.verb == "resource-location" and
+      not GetTileTerrainHasFlag(target[1], target[2], "forest") then
+      return false, "stale-target"
+   end
    if stage.action.target == "entity" then
       local entity = TargetStillPresent(world, target)
       if entity == nil then return false, "stale-target" end
+      if stage.action.verb == "resource" and not HarvestableMine(entity) then
+         return false, "stale-target"
+      end
       target = entity.slot
    end
    local command = {
@@ -855,8 +925,19 @@ local function NextStage(playerIndex, stage, choice, sequence, world)
          end
          if not legal then return nil, false, false end
       end
+      if stage.action.verb == "resource-location" then
+         local legal = false
+         for _, y in ipairs(ForestSites(world, stage).byX[choice.value] or {}) do
+            if GetTileTerrainHasFlag(choice.value, y, "forest") then
+               legal = true
+               break
+            end
+         end
+         if not legal then return nil, false, false end
+      end
       return {kind = "y", actor = stage.actor, action = stage.action,
          openingBuild = stage.openingBuild, openingSites = stage.openingSites,
+         forestSites = stage.forestSites,
          x = choice.value, page = 0}, false, true
    end
    if stage.kind == "y" and choice.kind == KIND_Y then
