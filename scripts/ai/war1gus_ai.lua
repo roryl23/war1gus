@@ -176,16 +176,32 @@ local function ResourceKind(resource)
    return RESOURCE_NONE
 end
 
-local function ReadUnit(slot)
+local function ReadUnit(slot, playerIndex)
    local ident = GetUnitVariable(slot, "Ident")
    if ident == nil then return nil end
    local hp = Number(GetUnitVariable(slot, "HitPoints"))
    local metadata = TypeMetadata(ident)
    local attackRange = Number(GetUnitVariable(slot, "AttackRange"))
    if attackRange <= 0 then attackRange = metadata.attackRange end
+   local owner = Number(GetUnitVariable(slot, "Player"))
+   local role = UNIT_ROLES[ident] or 0
+   local currentAction, resourcePhase, carriedResourceId, resourcesHeld
+   if owner == playerIndex and role == 1 then
+      currentAction = math.min(255, math.floor(math.max(0,
+         Number(GetUnitVariable(slot, "CurrentAction")))))
+      resourcePhase = math.min(255, math.floor(math.max(0,
+         Number(GetUnitVariable(slot, "ResourcePhase")))))
+      resourcesHeld = math.min(65535, math.floor(math.max(0,
+         Number(GetUnitVariable(slot, "ResourcesHeld")))))
+      carriedResourceId = 0
+      if resourcesHeld > 0 then
+         carriedResourceId = math.min(268435455, math.floor(math.max(0,
+            Number(GetUnitVariable(slot, "CurrentResource")))))
+      end
+   end
    return {
       slot = slot, ident = ident,
-      owner = Number(GetUnitVariable(slot, "Player")),
+      owner = owner,
       x = Number(GetUnitVariable(slot, "PosX")),
       y = Number(GetUnitVariable(slot, "PosY")),
       hp = hp,
@@ -198,7 +214,8 @@ local function ReadUnit(slot)
       goldCost = metadata.goldCost, woodCost = metadata.woodCost,
       hash = metadata.hash, attackRange = attackRange,
       sightRange = Number(GetUnitVariable(slot, "SightRange")),
-      role = UNIT_ROLES[ident] or 0
+      role = role, currentAction = currentAction, resourcePhase = resourcePhase,
+      carriedResourceId = carriedResourceId, resourcesHeld = resourcesHeld
    }
 end
 
@@ -214,7 +231,7 @@ local function NewWorldSnapshot(playerIndex)
       ownAssets = {}, enemyAssets = {}, hasHall = false
    }
    for _, slot in ipairs(GetUnits("any")) do
-      local unit = ReadUnit(slot)
+      local unit = ReadUnit(slot, playerIndex)
       if unit ~= nil then
          if unit.owner == playerIndex then
             if unit.role == 2 then world.hasHall = true end
@@ -227,17 +244,23 @@ local function NewWorldSnapshot(playerIndex)
          else
             unit.relation = RELATION_NEUTRAL
          end
-         -- Cargo still counts toward owned/enemy assets, but only units that
-         -- the host confirms alive on the map become observable actors/targets.
-         if AiUnitOnMap(slot) and unit.x >= 0 and unit.y >= 0 and
+         -- Units inside a resource host remain observations, but cannot be
+         -- selected as actors or targets until the host puts them on the map.
+         if unit.x >= 0 and unit.y >= 0 and
             unit.x < world.width and unit.y < world.height then
-            if unit.relation == RELATION_OWN then
-               world.own[#world.own + 1] = unit
-            elseif unit.relation == RELATION_ENEMY then
-               world.enemy[#world.enemy + 1] = unit
+            local onMap = AiUnitOnMap(slot)
+            if onMap then
+               if unit.relation == RELATION_OWN then
+                  world.own[#world.own + 1] = unit
+               elseif unit.relation == RELATION_ENEMY then
+                  world.enemy[#world.enemy + 1] = unit
+               end
+               world.entities[#world.entities + 1] = unit
+               world.bySlot[unit.slot] = unit
+            elseif unit.relation == RELATION_OWN and unit.role == 1 and
+               unit.currentAction == 20 then
+               world.entities[#world.entities + 1] = unit
             end
-            world.entities[#world.entities + 1] = unit
-            world.bySlot[unit.slot] = unit
          end
       end
    end
@@ -359,13 +382,23 @@ local function EntityWords(unit)
    if unit.building then flags = flags + 2 end
    if unit.wall then flags = flags + 4 end
    if unit.idle then flags = flags + 8 end
+   local resourceKind, attackRange, sightRange =
+      unit.resourceKind, unit.attackRange, unit.sightRange
+   if unit.role == 1 and unit.relation == RELATION_OWN then
+      flags = flags + 16 * unit.currentAction
+      sightRange = math.min(255, math.floor(math.max(0, sightRange))) +
+         256 * unit.resourcePhase
+      resourceKind = resourceKind + 16 * unit.carriedResourceId
+      attackRange = math.min(255, math.floor(math.max(0, attackRange))) +
+         256 * unit.resourcesHeld
+   end
    return {
       NonNegativeWord(unit.slot), UInt32(unit.hash), NonNegativeWord(unit.relation),
       NonNegativeWord(unit.role), NonNegativeWord(unit.x), NonNegativeWord(unit.y),
       NonNegativeWord(unit.hp), NonNegativeWord(unit.maxHp),
       NonNegativeWord(unit.goldCost), NonNegativeWord(unit.woodCost),
-      NonNegativeWord(flags), NonNegativeWord(unit.resourceKind),
-      NonNegativeWord(unit.attackRange), NonNegativeWord(unit.sightRange)
+      NonNegativeWord(flags), NonNegativeWord(resourceKind),
+      NonNegativeWord(attackRange), NonNegativeWord(sightRange)
    }
 end
 
@@ -553,8 +586,9 @@ local function StageOptions(playerIndex, world, stage)
       end
    elseif stage.kind == "entity" then
       for _, entity in ipairs(world.entities) do
-         if stage.action.verb ~= "resource" or
-            (stage.actor.role == 1 and HarvestableMine(entity)) then
+         if world.bySlot[entity.slot] == entity and
+            (stage.action.verb ~= "resource" or
+             (stage.actor.role == 1 and HarvestableMine(entity))) then
             options[#options + 1] = {
                kind = KIND_ENTITY, actor = actorIndex, target = entity.entityIndex,
                hash = actionHash, value = entity
