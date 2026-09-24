@@ -25,6 +25,9 @@ local RELATION_NEUTRAL = 2
 local RESOURCE_NONE = 0
 local RESOURCE_GOLD = 1
 local RESOURCE_WOOD = 2
+local OPENING_MINE_RADIUS = 12 -- legal town-hall sites near a mine, never a substitute for the build rule
+local OPENING_BUILD_TIMEOUT = 1800 -- release a worker whose hall order never finishes
+
 
 -- These describe observations only; they do not restrict which actors can act.
 local UNIT_ROLES = {
@@ -208,12 +211,13 @@ local function NewWorldSnapshot(playerIndex)
       demand = Number(GetPlayerData(playerIndex, "Demand")),
       width = Number(Map.Info.MapWidth), height = Number(Map.Info.MapHeight),
       entities = {}, own = {}, enemy = {}, bySlot = {},
-      ownAssets = {}, enemyAssets = {}
+      ownAssets = {}, enemyAssets = {}, hasHall = false
    }
    for _, slot in ipairs(GetUnits("any")) do
       local unit = ReadUnit(slot)
       if unit ~= nil then
          if unit.owner == playerIndex then
+            if unit.role == 2 then world.hasHall = true end
             unit.relation = RELATION_OWN
             world.ownAssets[#world.ownAssets + 1] = unit
          elseif Players[playerIndex] ~= nil and Players[unit.owner] ~= nil and
@@ -240,6 +244,24 @@ local function NewWorldSnapshot(playerIndex)
    table.sort(world.entities, function(a, b) return a.slot < b.slot end)
    table.sort(world.own, function(a, b) return a.slot < b.slot end)
    for index, unit in ipairs(world.entities) do unit.entityIndex = index end
+   local locks = stratagus.gameData.AIState.war1gusOpeningBuilders
+   local lock = locks and locks[playerIndex]
+   if lock ~= nil then
+      local builder = world.bySlot[lock.slot]
+      local owned = false
+      for _, unit in ipairs(world.ownAssets) do
+         if unit.slot == lock.slot then owned = true; break end
+      end
+      local hall = "unit-" .. GetPlayerData(playerIndex, "RaceName") .. "-town-hall"
+      local completed = GetPlayerData(playerIndex, "UnitTypesAiActiveCount", lock.type) > 0 or
+         GetPlayerData(playerIndex, "UnitTypesAiActiveCount", hall) > 0
+      if completed or not owned or (builder ~= nil and builder.idle and not world.hasHall) or
+         GameCycle - lock.cycle >= OPENING_BUILD_TIMEOUT then
+         locks[playerIndex] = nil
+      else
+         world.openingBuilder = lock.slot
+      end
+   end
    return world
 end
 
@@ -359,10 +381,84 @@ local function TargetStillPresent(world, original)
    end
    return nil
 end
+local function OpeningWorker(world, actor)
+   return actor ~= nil and actor.owner == world.playerIndex and
+      actor.role == 1 and not world.hasHall
+end
+
+local function OpeningHallAction(action)
+   return action ~= nil and action.verb == "build-at" and
+      (action.argument == "unit-human-first-town-hall" or
+       action.argument == "unit-orc-first-town-hall" or
+       action.argument == "unit-human-town-hall" or
+       action.argument == "unit-orc-town-hall")
+end
+
+local function GoldMines(world)
+   local mines = {}
+   for _, unit in ipairs(world.entities) do
+      if unit.resourceKind == RESOURCE_GOLD then mines[#mines + 1] = unit end
+   end
+   return mines
+end
+
+local function NearGoldMine(mines, x, y)
+   for _, mine in ipairs(mines) do
+      if math.abs(x - mine.x) <= OPENING_MINE_RADIUS and
+         math.abs(y - mine.y) <= OPENING_MINE_RADIUS then
+         return true
+      end
+   end
+   return false
+end
+
+local function NearestGoldMineDistance(mines, actor)
+   local nearest
+   for _, mine in ipairs(mines) do
+      local distance = math.max(math.abs(actor.x - mine.x), math.abs(actor.y - mine.y))
+      if nearest == nil or distance < nearest then nearest = distance end
+   end
+   return nearest
+end
+
+local function LocalOpeningSite(mines, actor, nearestMineDistance, x, y)
+   return nearestMineDistance ~= nil and
+      math.max(math.abs(actor.x - x), math.abs(actor.y - y)) <= nearestMineDistance + 8 and
+      NearGoldMine(mines, x, y)
+end
+
+local function OpeningSites(playerIndex, world, stage)
+   local sites = stage.openingSites
+   if sites ~= nil and sites.width == world.width and sites.height == world.height then
+      return sites
+   end
+   sites = {width = world.width, height = world.height, xs = {}, byX = {}}
+   for x = 0, world.width - 1 do
+      local ys = {}
+      for y = 0, world.height - 1 do
+         if AiCanBuildAt(playerIndex, stage.actor.slot, stage.action.argument, {x, y}) then
+            ys[#ys + 1] = y
+         end
+      end
+      if #ys > 0 then
+         sites.xs[#sites.xs + 1] = x
+         sites.byX[x] = ys
+      end
+   end
+   stage.openingSites = sites
+   return sites
+end
+
+local function OpeningSiteLegal(playerIndex, stage, x, y)
+   return AiCanBuildAt(playerIndex, stage.actor.slot, stage.action.argument, {x, y})
+end
 
 local function NewStage(stage, world)
    if stage == nil or stage.kind == "actor" then
       return {kind = "actor", page = stage and stage.page or 0}
+   end
+   if stage.openingBuild and world.hasHall then
+      return {kind = "actor", page = 0}
    end
    local actor = ActorStillPresent(world, stage.actor)
    if actor == nil then return {kind = "actor", page = 0} end
@@ -379,16 +475,19 @@ local function StageOptions(playerIndex, world, stage)
    local actionHash = stage.action and ActionIdentity(stage.action) or 0
    if stage.kind == "actor" then
       for _, actor in ipairs(world.own) do
-         options[#options + 1] = {
-            kind = KIND_ACTOR, actor = actor.entityIndex, value = actor,
-            hash = actor.hash
-         }
+         if actor.slot ~= world.openingBuilder then
+            options[#options + 1] = {
+               kind = KIND_ACTOR, actor = actor.entityIndex, value = actor,
+               hash = actor.hash, preferred = OpeningWorker(world, actor) and 1 or 0
+            }
+         end
       end
    elseif stage.kind == "action" then
       for _, action in ipairs(ActionsForActor(playerIndex, stage.actor)) do
          options[#options + 1] = {
             kind = KIND_ACTION, actor = actorIndex, value = action,
-            hash = ActionIdentity(action)
+            hash = ActionIdentity(action),
+            preferred = OpeningWorker(world, stage.actor) and OpeningHallAction(action) and 1 or 0
          }
       end
    elseif stage.kind == "entity" then
@@ -399,18 +498,66 @@ local function StageOptions(playerIndex, world, stage)
          }
       end
    elseif stage.kind == "x" then
-      for x = 0, world.width - 1 do
-         options[#options + 1] = {
-            kind = KIND_X, actor = actorIndex, hash = actionHash,
-            x = x, value = x
-         }
+      if stage.openingBuild then
+         local sites = OpeningSites(playerIndex, world, stage)
+         local mines = GoldMines(world)
+         local nearestMineDistance = NearestGoldMineDistance(mines, stage.actor)
+         for _, x in ipairs(sites.xs) do
+            local legal, preferred = false, false
+            if nearestMineDistance ~= nil then
+               for _, y in ipairs(sites.byX[x]) do
+                  if LocalOpeningSite(mines, stage.actor, nearestMineDistance, x, y) and
+                     OpeningSiteLegal(playerIndex, stage, x, y) then
+                     legal, preferred = true, true
+                     break
+                  end
+               end
+            end
+            if not legal then
+               for _, y in ipairs(sites.byX[x]) do
+                  if OpeningSiteLegal(playerIndex, stage, x, y) then
+                     legal = true
+                     break
+                  end
+               end
+            end
+            if legal then
+               options[#options + 1] = {
+                  kind = KIND_X, actor = actorIndex, hash = actionHash,
+                  x = x, value = x, preferred = preferred and 2 or 0
+               }
+            end
+         end
+      else
+         for x = 0, world.width - 1 do
+            options[#options + 1] = {
+               kind = KIND_X, actor = actorIndex, hash = actionHash,
+               x = x, value = x
+            }
+         end
       end
    elseif stage.kind == "y" then
-      for y = 0, world.height - 1 do
-         options[#options + 1] = {
-            kind = KIND_Y, actor = actorIndex, hash = actionHash,
-            x = stage.x, y = y, value = y
-         }
+      if stage.openingBuild then
+         local ys = OpeningSites(playerIndex, world, stage).byX[stage.x] or {}
+         local mines = GoldMines(world)
+         local nearestMineDistance = NearestGoldMineDistance(mines, stage.actor)
+         for _, y in ipairs(ys) do
+            if OpeningSiteLegal(playerIndex, stage, stage.x, y) then
+               options[#options + 1] = {
+                  kind = KIND_Y, actor = actorIndex, hash = actionHash,
+                  x = stage.x, y = y, value = y,
+                  preferred = LocalOpeningSite(mines, stage.actor, nearestMineDistance, stage.x, y)
+                     and 2 or 0
+               }
+            end
+         end
+      else
+         for y = 0, world.height - 1 do
+            options[#options + 1] = {
+               kind = KIND_Y, actor = actorIndex, hash = actionHash,
+               x = stage.x, y = y, value = y
+            }
+         end
       end
    end
    return options
@@ -421,7 +568,7 @@ local function CandidateWords(option)
       NonNegativeWord(option.kind), NonNegativeWord(option.actor),
       NonNegativeWord(option.target), UInt32(option.hash),
       NonNegativeWord(option.x), NonNegativeWord(option.y),
-      0, 0, 0, 0, 0, 0
+      option.preferred or 0, 0, 0, 0, 0, 0
    }
 end
 
@@ -620,7 +767,20 @@ local function PublishSelection(playerIndex, sequence, stage, target, world)
       actor = actor.slot, verb = stage.action.verb,
       argument = CommandArgument(stage.action, target)
    }
-   if AiPublishCommandBatch(playerIndex, sequence, {command}) then return true end
+   if AiPublishCommandBatch(playerIndex, sequence, {command}) then
+      if stage.openingBuild then
+         local mines = GoldMines(world)
+         if LocalOpeningSite(mines, actor,
+            NearestGoldMineDistance(mines, actor), target[1], target[2]) then
+            local aiState = stratagus.gameData.AIState
+            aiState.war1gusOpeningBuilders = aiState.war1gusOpeningBuilders or {}
+            aiState.war1gusOpeningBuilders[playerIndex] = {
+               slot = actor.slot, type = stage.action.argument, cycle = GameCycle
+            }
+         end
+      end
+      return true
+   end
    return false, "publication-rejected"
 end
 
@@ -638,7 +798,8 @@ local function NextStage(playerIndex, stage, choice, sequence, world)
    if stage.kind == "action" and choice.kind == KIND_ACTION then
       local action = choice.value
       local nextStage = {
-         kind = action.target, actor = stage.actor, action = action, page = 0
+         kind = action.target, actor = stage.actor, action = action, page = 0,
+         openingBuild = OpeningWorker(world, stage.actor) and OpeningHallAction(action)
       }
       if action.target == "position" then nextStage.kind = "x" end
       if action.target == "none" then
@@ -652,7 +813,19 @@ local function NextStage(playerIndex, stage, choice, sequence, world)
       return nil, true, accepted, reason
    end
    if stage.kind == "x" and choice.kind == KIND_X then
+      if stage.openingSites ~= nil then
+         local ys = stage.openingSites.byX[choice.value] or {}
+         local legal = false
+         for _, y in ipairs(ys) do
+            if OpeningSiteLegal(playerIndex, stage, choice.value, y) then
+               legal = true
+               break
+            end
+         end
+         if not legal then return nil, false, false end
+      end
       return {kind = "y", actor = stage.actor, action = stage.action,
+         openingBuild = stage.openingBuild, openingSites = stage.openingSites,
          x = choice.value, page = 0}, false, true
    end
    if stage.kind == "y" and choice.kind == KIND_Y then
