@@ -281,6 +281,10 @@ end
 
 local function RewardComponents(playerIndex, world, terminal)
    local enemyAsset, ownAsset = AssetValue(world.enemyAssets), AssetValue(world.ownAssets)
+   local gold = math.max(0, Number(GetPlayerData(playerIndex, "TotalResources", "gold")))
+   local wood = math.max(0, Number(GetPlayerData(playerIndex, "TotalResources", "wood")))
+   local kills = math.max(0, Number(GetPlayerData(playerIndex, "TotalKills")))
+   local razings = math.max(0, Number(GetPlayerData(playerIndex, "TotalRazings")))
    local books = RewardBooks()
    local book = books[playerIndex]
    local components = {enemyProgress = 0, ownLoss = 0, time = 0, terminal = 0}
@@ -291,7 +295,10 @@ local function RewardComponents(playerIndex, world, terminal)
             started = true, hadOpponent = true,
             initialEnemy = math.max(enemyAsset, 1), maxOwn = math.max(ownAsset, 1),
             previousEnemy = enemyAsset, previousOwn = ownAsset,
-            previousTimeBucket = math.floor(GameCycle / 300)
+            previousTimeBucket = math.floor(GameCycle / 300),
+            initialGold = gold, initialWood = wood,
+            previousGold = gold, previousWood = wood,
+            previousKills = kills, previousRazings = razings
          }
          books[playerIndex] = book
       end
@@ -305,6 +312,30 @@ local function RewardComponents(playerIndex, world, terminal)
       components.time = -math.max(bucket - book.previousTimeBucket, 0)
       book.previousEnemy, book.previousOwn, book.previousTimeBucket =
          enemyAsset, ownAsset, bucket
+
+      -- Older saved reward books begin tracking these counters at this observation.
+      if book.previousGold == nil then
+         book.initialGold, book.initialWood = gold, wood
+         book.previousGold, book.previousWood = gold, wood
+         book.previousKills, book.previousRazings = kills, razings
+      end
+      local previousResourceScore = math.floor(
+         (book.previousGold - book.initialGold + book.previousWood - book.initialWood) / 100)
+      -- Rebase drops without erasing previously earned whole or fractional progress.
+      if gold < book.previousGold then
+         book.initialGold = book.initialGold - (book.previousGold - gold)
+      end
+      if wood < book.previousWood then
+         book.initialWood = book.initialWood - (book.previousWood - wood)
+      end
+      local resourceScore = math.floor(
+         (gold - book.initialGold + wood - book.initialWood) / 100)
+      -- The four-word reward header bundles positive events with enemy progress.
+      components.enemyProgress = components.enemyProgress + resourceScore - previousResourceScore +
+         10 * math.max(kills - book.previousKills, 0) +
+         50 * math.max(razings - book.previousRazings, 0)
+      book.previousGold, book.previousWood = gold, wood
+      book.previousKills, book.previousRazings = kills, razings
    end
    if terminal == "defeat" then components.terminal = -1000 end
    if terminal == "victory" then components.terminal = 1000 end
