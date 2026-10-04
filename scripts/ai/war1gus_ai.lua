@@ -999,7 +999,6 @@ function War1gusAI()
    local playerIndex = AiPlayer()
    FinalizeEndedPlayers()
    if IsEnded(playerIndex) then return end
-   local world = NewWorldSnapshot(playerIndex)
    local terminal = TerminalOutcome(playerIndex)
    if terminal ~= nil then
       EndPlayer(playerIndex, terminal)
@@ -1015,7 +1014,7 @@ function War1gusAI()
    local async = War1gusAiAsyncMode()
    local server = stratagus.gameData.War1gusAiServer
    local pending = async and server and server.pending[playerIndex] or nil
-   local selected, plans, sequence, stage
+   local selected, plans, sequence, stage, world
    if pending ~= nil then
       if pending.server ~= server or pending.epoch ~= server.epoch or
          server.handles[playerIndex] ~= pending.handle then
@@ -1095,6 +1094,7 @@ function War1gusAI()
          {name = "selection", value = JsonString(tostring(selected))}
       })
    else
+      world = NewWorldSnapshot(playerIndex)
       stage = NewStage(stages[playerIndex], world)
       stages[playerIndex] = stage
       local state, components
@@ -1154,6 +1154,9 @@ function War1gusAI()
       return
    end
 
+   -- A pending reply needs the live world only after its index is valid.
+   -- This also releases expired opening-builder locks before any selection.
+   if world == nil then world = NewWorldSnapshot(playerIndex) end
    local nextStage, completed, accepted, reason =
       NextStage(playerIndex, stage, plans[selected], sequence, world)
    stages[playerIndex] = nextStage
