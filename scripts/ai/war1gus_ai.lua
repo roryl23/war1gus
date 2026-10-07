@@ -27,9 +27,12 @@ local RESOURCE_GOLD = 1
 local RESOURCE_WOOD = 2
 local OPENING_MINE_RADIUS = 12 -- legal town-hall sites near a mine, never a substitute for the build rule
 local OPENING_BUILD_TIMEOUT = 1800 -- release a worker whose hall order never finishes
+local UNIT_ACTION_TRAIN = 10 -- Stratagus UnitAction::Train
+local UNIT_ACTION_BUILT = 13 -- Stratagus UnitAction::Built
+local UNIT_ACTION_RESOURCE = 20 -- Stratagus UnitAction::Resource
 
 
--- These describe observations only; they do not restrict which actors can act.
+-- Roles describe observations and select worker-specific economy choices.
 local UNIT_ROLES = {
    ["unit-peasant"] = 1, ["unit-peon"] = 1,
    ["unit-human-town-hall"] = 2, ["unit-human-first-town-hall"] = 2,
@@ -52,8 +55,10 @@ local UNIT_ROLES = {
    ["unit-sorceress"] = 16
 }
 
--- Shared orders are offered for every actor, including buildings. The engine,
--- not this list, decides whether any particular actor may execute an order.
+local RETURN_GOODS_ACTION = {verb = "return-goods", target = "entity"}
+
+-- Primitive orders are shared across actor types, subject to the worker
+-- economy filters below; the engine remains the final authority on execution.
 local PRIMITIVE_ACTIONS = {
    {verb = "stop", target = "none"},
    {verb = "stand-ground", target = "none"},
@@ -72,7 +77,7 @@ local PRIMITIVE_ACTIONS = {
    {verb = "resource", target = "entity"},
    {verb = "repair", target = "entity"},
    {verb = "board", target = "entity"},
-   {verb = "return-goods", target = "entity"}
+   RETURN_GOODS_ACTION
 }
 local CATALOG_TARGETS = {
    ["build-at"] = "position", ["cast-position"] = "position",
@@ -160,6 +165,8 @@ local function TypeMetadata(ident)
          hash = StableHash32(ident),
          building = GetUnitTypeData(ident, "Building"),
          canAttack = GetUnitTypeData(ident, "CanAttack"),
+         canStoreGold = GetUnitTypeData(ident, "CanStore", "gold"),
+         canStoreWood = GetUnitTypeData(ident, "CanStore", "wood"),
          resource = GetUnitTypeData(ident, "GivesResource"),
          goldCost = Number(GetUnitTypeData(ident, "Costs", "gold")),
          woodCost = Number(GetUnitTypeData(ident, "Costs", "wood")),
@@ -208,6 +215,10 @@ local function ReadUnit(slot, playerIndex)
       maxHp = math.max(Number(GetUnitVariable(slot, "HitPoints", "Max")), 1),
       idle = GetUnitVariable(slot, "Idle"),
       building = metadata.building,
+      depotReady = metadata.building and hp > 0 and
+         GetUnitVariable(slot, "Active") and
+         Number(GetUnitVariable(slot, "CurrentAction")) ~= UNIT_ACTION_BUILT,
+      canStoreGold = metadata.canStoreGold, canStoreWood = metadata.canStoreWood,
       wall = GetUnitBoolFlag(slot, "Wall"),
       canAttack = metadata.canAttack,
       resourceKind = ResourceKind(metadata.resource),
@@ -228,13 +239,20 @@ local function NewWorldSnapshot(playerIndex)
       demand = Number(GetPlayerData(playerIndex, "Demand")),
       width = Number(Map.Info.MapWidth), height = Number(Map.Info.MapHeight),
       entities = {}, own = {}, enemy = {}, bySlot = {},
-      ownAssets = {}, enemyAssets = {}, hasHall = false
+      ownAssets = {}, enemyAssets = {}, hasHall = false,
+      hasReadyDepot = false, activeHarvesters = 0
    }
    for _, slot in ipairs(GetUnits("any")) do
       local unit = ReadUnit(slot, playerIndex)
       if unit ~= nil then
          if unit.owner == playerIndex then
             if unit.role == 2 then world.hasHall = true end
+            if unit.role == 1 and unit.currentAction == UNIT_ACTION_RESOURCE then
+               world.activeHarvesters = world.activeHarvesters + 1
+            end
+            if unit.depotReady and (unit.canStoreGold or unit.canStoreWood) then
+               world.hasReadyDepot = true
+            end
             unit.relation = RELATION_OWN
             world.ownAssets[#world.ownAssets + 1] = unit
          elseif Players[playerIndex] ~= nil and Players[unit.owner] ~= nil and
@@ -410,18 +428,63 @@ local function ActionIdentity(action)
    return StableHash32(action.verb .. ":" .. (action.argument or ""))
 end
 
-local function ActionsForActor(playerIndex, actor)
+local function CompatibleDepot(worker, depot, playerIndex)
+   return worker.role == 1 and worker.resourcesHeld > 0 and
+      depot.owner == playerIndex and depot.depotReady and
+      ((worker.carriedResourceId == RESOURCE_GOLD and depot.canStoreGold) or
+       (worker.carriedResourceId == RESOURCE_WOOD and depot.canStoreWood))
+end
+
+local function HasCompatibleDepot(world, worker)
+   for _, depot in ipairs(world.own) do
+      if CompatibleDepot(worker, depot, world.playerIndex) then return true end
+   end
+   return false
+end
+
+local function ReturningOnResource(world, worker)
+   return worker.role == 1 and worker.resourcesHeld > 0 and
+      worker.currentAction == UNIT_ACTION_RESOURCE and HasCompatibleDepot(world, worker)
+end
+
+local function BusyProduction(actor)
+   if not actor.building then return false end
+   local action = Number(GetUnitVariable(actor.slot, "CurrentAction"))
+   return action == UNIT_ACTION_BUILT or action == UNIT_ACTION_TRAIN
+end
+
+local function ProtectedHarvester(world, actor)
+   return world.hasReadyDepot and world.activeHarvesters <= 1 and
+      actor.role == 1 and actor.currentAction == UNIT_ACTION_RESOURCE
+end
+
+local function ActionsForActor(playerIndex, world, actor)
    local actions = {}
-   for _, action in ipairs(PRIMITIVE_ACTIONS) do
-      if actor.role == 1 or
-         (action.verb ~= "resource" and action.verb ~= "resource-location") then
-         actions[#actions + 1] = action
+   local carrying = actor.role == 1 and actor.resourcesHeld > 0
+   local canReturn = carrying and HasCompatibleDepot(world, actor)
+   local harvesting = actor.role == 1 and actor.currentAction == UNIT_ACTION_RESOURCE
+   if canReturn and not harvesting then
+      return {RETURN_GOODS_ACTION}
+   end
+   if not harvesting then
+      for _, action in ipairs(PRIMITIVE_ACTIONS) do
+         if (actor.role == 1 or
+            (action.verb ~= "resource" and action.verb ~= "resource-location")) and
+            (action.verb ~= "return-goods" or canReturn) then
+            actions[#actions + 1] = action
+         end
       end
    end
    for _, entry in ipairs(AiActionCatalog(playerIndex)) do
       if entry.actor == actor.ident then
          local target = CATALOG_TARGETS[entry.verb]
-         if target ~= nil then
+         if target ~= nil and
+            (not harvesting or
+             (entry.verb == "build-at" and not ProtectedHarvester(world, actor))) and
+            (entry.verb ~= "build-at" or actor.idle or harvesting) and
+            (entry.verb ~= "train" or actor.idle) and
+            ((entry.verb ~= "build-at" and entry.verb ~= "train") or
+             AiCanProduceType(playerIndex, entry.argument)) then
             actions[#actions + 1] = {
                verb = entry.verb, argument = entry.argument, target = target
             }
@@ -499,8 +562,8 @@ local function LocalOpeningSite(mines, actor, nearestMineDistance, x, y)
       NearGoldMine(mines, x, y)
 end
 
-local function OpeningSites(playerIndex, world, stage)
-   local sites = stage.openingSites
+local function BuildSites(playerIndex, world, stage)
+   local sites = stage.buildSites
    if sites ~= nil and sites.width == world.width and sites.height == world.height then
       return sites
    end
@@ -517,11 +580,11 @@ local function OpeningSites(playerIndex, world, stage)
          sites.byX[x] = ys
       end
    end
-   stage.openingSites = sites
+   stage.buildSites = sites
    return sites
 end
 
-local function OpeningSiteLegal(playerIndex, stage, x, y)
+local function BuildSiteLegal(playerIndex, stage, x, y)
    return AiCanBuildAt(playerIndex, stage.actor.slot, stage.action.argument, {x, y})
 end
 
@@ -555,7 +618,10 @@ local function NewStage(stage, world)
       return {kind = "actor", page = 0}
    end
    local actor = ActorStillPresent(world, stage.actor)
-   if actor == nil then return {kind = "actor", page = 0} end
+   if actor == nil or BusyProduction(actor) or ReturningOnResource(world, actor) or
+      ProtectedHarvester(world, actor) then
+      return {kind = "actor", page = 0}
+   end
    stage.actor = actor
    if stage.kind ~= "action" and stage.action == nil then
       return {kind = "actor", page = 0}
@@ -563,32 +629,58 @@ local function NewStage(stage, world)
    return stage
 end
 
+local function PreferredCombatProducer(playerIndex, world, actor, catalog)
+   if not world.hasHall or not actor.idle or not actor.depotReady then return false end
+   for _, entry in ipairs(catalog) do
+      if entry.actor == actor.ident and entry.verb == "train" and
+         TypeMetadata(entry.argument).canAttack and
+         AiCanProduceType(playerIndex, entry.argument) then
+         return true
+      end
+   end
+   return false
+end
+
 local function StageOptions(playerIndex, world, stage)
    local options = {}
    local actorIndex = stage.actor and stage.actor.entityIndex or 0
    local actionHash = stage.action and ActionIdentity(stage.action) or 0
    if stage.kind == "actor" then
+      local catalog = world.hasHall and AiActionCatalog(playerIndex)
       for _, actor in ipairs(world.own) do
-         if actor.slot ~= world.openingBuilder then
+         if actor.slot ~= world.openingBuilder and
+            not BusyProduction(actor) and not ReturningOnResource(world, actor) and
+            not ProtectedHarvester(world, actor) then
             options[#options + 1] = {
                kind = KIND_ACTOR, actor = actor.entityIndex, value = actor,
-               hash = actor.hash, preferred = OpeningWorker(world, actor) and 1 or 0
+               hash = actor.hash, preferred =
+                  (OpeningWorker(world, actor) or
+                   (actor.role == 1 and actor.idle and world.hasReadyDepot and
+                    world.activeHarvesters < 2) or
+                   (catalog and PreferredCombatProducer(playerIndex, world, actor, catalog))) and 1 or 0
             }
          end
       end
    elseif stage.kind == "action" then
-      for _, action in ipairs(ActionsForActor(playerIndex, stage.actor)) do
+      for _, action in ipairs(ActionsForActor(playerIndex, world, stage.actor)) do
          options[#options + 1] = {
             kind = KIND_ACTION, actor = actorIndex, value = action,
             hash = ActionIdentity(action),
-            preferred = OpeningWorker(world, stage.actor) and OpeningHallAction(action) and 1 or 0
+            preferred = (OpeningWorker(world, stage.actor) and OpeningHallAction(action) or
+               (stage.actor.role == 1 and stage.actor.idle and world.hasReadyDepot and
+                world.activeHarvesters < 2 and
+                (action.verb == "resource" or action.verb == "resource-location")) or
+               (world.hasHall and action.verb == "train" and stage.actor.idle and
+                stage.actor.depotReady and TypeMetadata(action.argument).canAttack)) and 1 or 0
          }
       end
    elseif stage.kind == "entity" then
       for _, entity in ipairs(world.entities) do
          if world.bySlot[entity.slot] == entity and
             (stage.action.verb ~= "resource" or
-             (stage.actor.role == 1 and HarvestableMine(entity))) then
+             (stage.actor.role == 1 and HarvestableMine(entity))) and
+            (stage.action.verb ~= "return-goods" or
+             CompatibleDepot(stage.actor, entity, playerIndex)) then
             options[#options + 1] = {
                kind = KIND_ENTITY, actor = actorIndex, target = entity.entityIndex,
                hash = actionHash, value = entity
@@ -596,27 +688,19 @@ local function StageOptions(playerIndex, world, stage)
          end
       end
    elseif stage.kind == "x" then
-      if stage.openingBuild then
-         local sites = OpeningSites(playerIndex, world, stage)
-         local mines = GoldMines(world)
-         local nearestMineDistance = NearestGoldMineDistance(mines, stage.actor)
+      if stage.action.verb == "build-at" then
+         local sites = BuildSites(playerIndex, world, stage)
+         local mines = stage.openingBuild and GoldMines(world) or nil
+         local nearestMineDistance = mines and NearestGoldMineDistance(mines, stage.actor)
          for _, x in ipairs(sites.xs) do
             local legal, preferred = false, false
-            if nearestMineDistance ~= nil then
-               for _, y in ipairs(sites.byX[x]) do
-                  if LocalOpeningSite(mines, stage.actor, nearestMineDistance, x, y) and
-                     OpeningSiteLegal(playerIndex, stage, x, y) then
-                     legal, preferred = true, true
-                     break
+            for _, y in ipairs(sites.byX[x]) do
+               if BuildSiteLegal(playerIndex, stage, x, y) then
+                  legal = true
+                  if mines and LocalOpeningSite(mines, stage.actor, nearestMineDistance, x, y) then
+                     preferred = true
                   end
-               end
-            end
-            if not legal then
-               for _, y in ipairs(sites.byX[x]) do
-                  if OpeningSiteLegal(playerIndex, stage, x, y) then
-                     legal = true
-                     break
-                  end
+                  if not mines or preferred then break end
                end
             end
             if legal then
@@ -650,16 +734,17 @@ local function StageOptions(playerIndex, world, stage)
          end
       end
    elseif stage.kind == "y" then
-      if stage.openingBuild then
-         local ys = OpeningSites(playerIndex, world, stage).byX[stage.x] or {}
-         local mines = GoldMines(world)
-         local nearestMineDistance = NearestGoldMineDistance(mines, stage.actor)
+      if stage.action.verb == "build-at" then
+         local ys = BuildSites(playerIndex, world, stage).byX[stage.x] or {}
+         local mines = stage.openingBuild and GoldMines(world) or nil
+         local nearestMineDistance = mines and NearestGoldMineDistance(mines, stage.actor)
          for _, y in ipairs(ys) do
-            if OpeningSiteLegal(playerIndex, stage, stage.x, y) then
+            if BuildSiteLegal(playerIndex, stage, stage.x, y) then
                options[#options + 1] = {
                   kind = KIND_Y, actor = actorIndex, hash = actionHash,
                   x = stage.x, y = y, value = y,
-                  preferred = LocalOpeningSite(mines, stage.actor, nearestMineDistance, stage.x, y)
+                  preferred = mines and
+                     LocalOpeningSite(mines, stage.actor, nearestMineDistance, stage.x, y)
                      and 2 or 0
                }
             end
@@ -881,7 +966,33 @@ end
 
 local function PublishSelection(playerIndex, sequence, stage, target, world)
    local actor = ActorStillPresent(world, stage.actor)
-   if actor == nil then return false, "stale-actor" end
+   if actor == nil or BusyProduction(actor) then return false, "stale-actor" end
+   if actor.role == 1 and actor.resourcesHeld > 0 and
+      HasCompatibleDepot(world, actor) and
+      (actor.currentAction == UNIT_ACTION_RESOURCE or stage.action.verb ~= "return-goods") then
+      return false, "stale-actor"
+   end
+   if actor.role == 1 and actor.currentAction == UNIT_ACTION_RESOURCE and
+      (stage.action.verb ~= "build-at" or ProtectedHarvester(world, actor)) then
+      return false, "stale-actor"
+   end
+   if (stage.action.verb == "build-at" or stage.action.verb == "train") and
+      not AiCanProduceType(playerIndex, stage.action.argument) then
+      return false, "stale-action"
+   end
+   if stage.action.verb == "build-at" then
+      if not (actor.idle or actor.currentAction == UNIT_ACTION_RESOURCE) then
+         return false, "stale-actor"
+      end
+      if not BuildSiteLegal(playerIndex, stage, target[1], target[2]) then
+         return false, "stale-target"
+      end
+   elseif stage.action.verb == "train" and not actor.idle then
+      return false, "stale-actor"
+   elseif stage.action.verb == "return-goods" and
+      (actor.role ~= 1 or actor.resourcesHeld == 0) then
+      return false, "stale-actor"
+   end
    if (stage.action.verb == "resource" or stage.action.verb == "resource-location")
       and actor.role ~= 1 then
       return false, "invalid-harvester"
@@ -894,6 +1005,10 @@ local function PublishSelection(playerIndex, sequence, stage, target, world)
       local entity = TargetStillPresent(world, target)
       if entity == nil then return false, "stale-target" end
       if stage.action.verb == "resource" and not HarvestableMine(entity) then
+         return false, "stale-target"
+      end
+      if stage.action.verb == "return-goods" and
+         not CompatibleDepot(actor, entity, playerIndex) then
          return false, "stale-target"
       end
       target = entity.slot
@@ -927,7 +1042,10 @@ local function NextStage(playerIndex, stage, choice, sequence, world)
    end
    if stage.kind == "actor" and choice.kind == KIND_ACTOR then
       local actor = ActorStillPresent(world, choice.value)
-      if actor == nil then return nil, false, false end
+      if actor == nil or BusyProduction(actor) or ReturningOnResource(world, actor) or
+         ProtectedHarvester(world, actor) then
+         return nil, false, false
+      end
       return {kind = "action", actor = actor, page = 0}, false, true
    end
    if stage.kind == "action" and choice.kind == KIND_ACTION then
@@ -948,11 +1066,11 @@ local function NextStage(playerIndex, stage, choice, sequence, world)
       return nil, true, accepted, reason
    end
    if stage.kind == "x" and choice.kind == KIND_X then
-      if stage.openingSites ~= nil then
-         local ys = stage.openingSites.byX[choice.value] or {}
+      if stage.action.verb == "build-at" then
+         local ys = BuildSites(playerIndex, world, stage).byX[choice.value] or {}
          local legal = false
          for _, y in ipairs(ys) do
-            if OpeningSiteLegal(playerIndex, stage, choice.value, y) then
+            if BuildSiteLegal(playerIndex, stage, choice.value, y) then
                legal = true
                break
             end
@@ -970,7 +1088,7 @@ local function NextStage(playerIndex, stage, choice, sequence, world)
          if not legal then return nil, false, false end
       end
       return {kind = "y", actor = stage.actor, action = stage.action,
-         openingBuild = stage.openingBuild, openingSites = stage.openingSites,
+         openingBuild = stage.openingBuild, buildSites = stage.buildSites,
          forestSites = stage.forestSites,
          x = choice.value, page = 0}, false, true
    end
