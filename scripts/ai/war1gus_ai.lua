@@ -326,6 +326,7 @@ local function RewardComponents(playerIndex, world, terminal)
    local wood = math.max(0, Number(GetPlayerData(playerIndex, "TotalResources", "wood")))
    local kills = math.max(0, Number(GetPlayerData(playerIndex, "TotalKills")))
    local razings = math.max(0, Number(GetPlayerData(playerIndex, "TotalRazings")))
+   local damage = math.max(0, Number(GetPlayerData(playerIndex, "TotalEnemyAssetDamage")))
    local books = RewardBooks()
    local book = books[playerIndex]
    local components = {enemyProgress = 0, ownLoss = 0, time = 0, terminal = 0}
@@ -335,7 +336,7 @@ local function RewardComponents(playerIndex, world, terminal)
          book = {
             started = true, hadOpponent = true,
             initialEnemy = math.max(enemyAsset, 1), maxOwn = math.max(ownAsset, 1),
-            previousEnemy = enemyAsset, previousOwn = ownAsset,
+            previousDamage = damage, previousOwn = ownAsset,
             previousTimeBucket = math.floor(GameCycle / 300),
             initialGold = gold, initialWood = wood,
             previousGold = gold, previousWood = wood,
@@ -344,15 +345,17 @@ local function RewardComponents(playerIndex, world, terminal)
          books[playerIndex] = book
       end
    else
+      -- Older saved books begin damage tracking without rewarding earlier hits.
+      local previousDamage = book.previousDamage or damage
       components.enemyProgress = Round(
-         600 * (book.previousEnemy - enemyAsset) / math.max(book.initialEnemy, 1))
+         600 * math.max(damage - previousDamage, 0) / math.max(book.initialEnemy, 1))
+      book.previousDamage = damage
       book.maxOwn = math.max(book.maxOwn, ownAsset, 1)
       components.ownLoss = -Round(
          150 * math.max(book.previousOwn - ownAsset, 0) / book.maxOwn)
       local bucket = math.floor(GameCycle / 300)
       components.time = -math.max(bucket - book.previousTimeBucket, 0)
-      book.previousEnemy, book.previousOwn, book.previousTimeBucket =
-         enemyAsset, ownAsset, bucket
+      book.previousOwn, book.previousTimeBucket = ownAsset, bucket
 
       -- Older saved reward books begin tracking these counters at this observation.
       if book.previousGold == nil then
