@@ -388,8 +388,15 @@ local function RewardComponents(playerIndex, world, terminal)
    return components, ownAsset, enemyAsset
 end
 
+local function HasNonWallUnits(playerIndex)
+   for _, unit in ipairs(GetUnits(playerIndex)) do
+      if not GetUnitBoolFlag(unit, "Wall") then return true end
+   end
+   return false
+end
+
 local function TerminalOutcome(playerIndex)
-   if Number(GetPlayerData(playerIndex, "TotalNumUnits")) == 0 then return "defeat" end
+   if not HasNonWallUnits(playerIndex) then return "defeat" end
    local book = RewardBooks()[playerIndex]
    if book ~= nil and book.started and book.hadOpponent and GetNumOpponents(playerIndex) == 0 then
       return "victory"
