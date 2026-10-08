@@ -1,0 +1,6 @@
+-- Stratagus Map Presentation
+-- Based on Middle Ground with four AI players and a human observer.
+-- File licensed under the GNU GPL version 2.
+
+DefinePlayerTypes("computer", "computer", "computer", "computer", "person", "nobody", "nobody", "nobody", "nobody", "nobody", "nobody", "nobody", "nobody", "computer")
+PresentMap("Middle Ground AI (Observer)", 5, 128, 128, 4)
