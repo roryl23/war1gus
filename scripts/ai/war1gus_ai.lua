@@ -1027,7 +1027,17 @@ local function PublishSelection(playerIndex, sequence, stage, target, world)
       actor = actor.slot, verb = stage.action.verb,
       argument = CommandArgument(stage.action, target)
    }
-   if AiPublishCommandBatch(playerIndex, sequence, {command}) then
+   local published = AiPublishCommandBatch(playerIndex, sequence, {command})
+   if VERBOSE_LOGGING then
+      War1gusAiLog("war1gus-ai.publish", {
+         {name = "player", value = tostring(playerIndex)},
+         {name = "sequence", value = tostring(sequence)},
+         {name = "actor", value = tostring(actor.slot)},
+         {name = "verb", value = JsonString(command.verb)},
+         {name = "published", value = tostring(published)}
+      })
+   end
+   if published then
       if stage.openingBuild then
          local mines = GoldMines(world)
          if LocalOpeningSite(mines, actor,
