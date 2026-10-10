@@ -59,9 +59,9 @@ local RETURN_GOODS_ACTION = {verb = "return-goods", target = "entity"}
 
 -- Primitive orders are shared across actor types, subject to the worker
 -- economy filters below; the engine remains the final authority on execution.
+-- Stand-ground is intentionally absent: it suppresses autonomous attacking.
 local PRIMITIVE_ACTIONS = {
    {verb = "stop", target = "none"},
-   {verb = "stand-ground", target = "none"},
    {verb = "explore", target = "position"},
    {verb = "cancel-build", target = "none"},
    {verb = "cancel-research", target = "none"},
@@ -327,6 +327,8 @@ local function RewardComponents(playerIndex, world, terminal)
    local kills = math.max(0, Number(GetPlayerData(playerIndex, "TotalKills")))
    local razings = math.max(0, Number(GetPlayerData(playerIndex, "TotalRazings")))
    local damage = math.max(0, Number(GetPlayerData(playerIndex, "TotalEnemyAssetDamage")))
+   local trained = math.max(0, Number(GetPlayerData(playerIndex, "TrainedUnits")))
+   local completed = math.max(0, Number(GetPlayerData(playerIndex, "CompletedBuildings")))
    local books = RewardBooks()
    local book = books[playerIndex]
    local components = {enemyProgress = 0, ownLoss = 0, time = 0, terminal = 0}
@@ -340,7 +342,8 @@ local function RewardComponents(playerIndex, world, terminal)
             previousTimeBucket = math.floor(GameCycle / 300),
             initialGold = gold, initialWood = wood,
             previousGold = gold, previousWood = wood,
-            previousKills = kills, previousRazings = razings
+            previousKills = kills, previousRazings = razings,
+            previousTrained = trained, previousCompleted = completed
          }
          books[playerIndex] = book
       end
@@ -374,12 +377,19 @@ local function RewardComponents(playerIndex, world, terminal)
       end
       local resourceScore = math.floor(
          (gold - book.initialGold + wood - book.initialWood) / 100)
+      -- Completion counters, not issued orders, give production credit once.
+      -- Saved books without these fields start from the current totals.
+      local previousTrained = book.previousTrained or trained
+      local previousCompleted = book.previousCompleted or completed
       -- The four-word reward header bundles positive events with enemy progress.
       components.enemyProgress = components.enemyProgress + resourceScore - previousResourceScore +
          10 * math.max(kills - book.previousKills, 0) +
-         50 * math.max(razings - book.previousRazings, 0)
+         50 * math.max(razings - book.previousRazings, 0) +
+         8 * math.max(trained - previousTrained, 0) +
+         20 * math.max(completed - previousCompleted, 0)
       book.previousGold, book.previousWood = gold, wood
       book.previousKills, book.previousRazings = kills, razings
+      book.previousTrained, book.previousCompleted = trained, completed
    end
    if terminal == "defeat" then components.terminal = -1000 end
    if terminal == "victory" then components.terminal = 1000 end
@@ -480,6 +490,7 @@ local function ActionsForActor(playerIndex, world, actor)
       for _, action in ipairs(PRIMITIVE_ACTIONS) do
          if (actor.role == 1 or
             (action.verb ~= "resource" and action.verb ~= "resource-location")) and
+            (action.verb ~= "stop" or not actor.idle) and
             (action.verb ~= "return-goods" or canReturn) then
             actions[#actions + 1] = action
          end
@@ -651,10 +662,96 @@ local function PreferredCombatProducer(playerIndex, world, actor, catalog)
    return false
 end
 
+local function CommandArgument(action, target, scratch)
+   if action.target == "entity" then
+      if action.verb == "cast-unit" then
+         scratch = scratch or {}
+         scratch.spell, scratch.target = action.argument, target
+         return scratch
+      end
+      return target
+   end
+   if action.target == "position" then
+      if action.verb == "build-at" then
+         scratch = scratch or {}
+         scratch.type, scratch.x, scratch.y = action.argument, target[1], target[2]
+         return scratch
+      elseif action.verb == "cast-position" then
+         scratch = scratch or {}
+         scratch.spell, scratch.x, scratch.y = action.argument, target[1], target[2]
+         return scratch
+      end
+      return target
+   end
+   return action.argument
+end
+
+-- A complete, single-command preview; publication still rechecks live state.
+local function CanOfferCommand(playerIndex, probe, batch, action, target)
+   probe.verb = action.verb
+   probe.argument = CommandArgument(action, target, probe.argument)
+   return AiCanPublishCommandBatch(playerIndex, batch)
+end
+
+local function EntityTargetAllowed(playerIndex, world, actor, action, entity)
+   return world.bySlot[entity.slot] == entity and
+      (action.verb ~= "resource" or
+       (actor.role == 1 and HarvestableMine(entity))) and
+      (action.verb ~= "return-goods" or CompatibleDepot(actor, entity, playerIndex))
+end
+
+local function ActionAvailable(playerIndex, world, actor, action, probe, batch, position)
+   probe.verb, probe.argument = action.verb, nil
+   if action.target == "none" then
+      return CanOfferCommand(playerIndex, probe, batch, action, nil)
+   end
+   if action.target == "entity" then
+      for _, entity in ipairs(world.entities) do
+         if EntityTargetAllowed(playerIndex, world, actor, action, entity) and
+            CanOfferCommand(playerIndex, probe, batch, action, entity.slot) then
+            return true
+         end
+      end
+      return false
+   end
+   -- Coordinate-sensitive build and spell actions are generated by engine
+   -- metadata. The x stage checks actual positions; scanning every map tile
+   -- here for every catalog entry duplicates that expensive search.
+   if action.verb == "build-at" then
+      return (actor.idle or actor.currentAction == UNIT_ACTION_RESOURCE) and
+         AiCanProduceType(playerIndex, action.argument)
+   end
+   if action.verb == "cast-position" then return true end
+   if action.verb == "resource-location" then
+      for x = 0, world.width - 1 do
+         position[1] = x
+         for y = 0, world.height - 1 do
+            if GetTileTerrainHasFlag(x, y, "forest") then
+               position[2] = y
+               if CanOfferCommand(playerIndex, probe, batch, action, position) then
+                  return true
+               end
+            end
+         end
+      end
+      return false
+   end
+   -- Movement, patrol, explore, attack-ground, and unload depend on actor
+   -- capability rather than which on-map coordinate is supplied.
+   position[1], position[2] = actor.x, actor.y
+   return CanOfferCommand(playerIndex, probe, batch, action, position)
+end
+
 local function StageOptions(playerIndex, world, stage)
    local options = {}
    local actorIndex = stage.actor and stage.actor.entityIndex or 0
    local actionHash = stage.action and ActionIdentity(stage.action) or 0
+   local probe, batch, position
+   if stage.kind ~= "actor" then
+      probe = {actor = stage.actor.slot}
+      batch = {probe}
+      if stage.kind ~= "entity" then position = {0, 0} end
+   end
    if stage.kind == "actor" then
       local catalog = world.hasHall and AiActionCatalog(playerIndex)
       for _, actor in ipairs(world.own) do
@@ -673,24 +770,23 @@ local function StageOptions(playerIndex, world, stage)
       end
    elseif stage.kind == "action" then
       for _, action in ipairs(ActionsForActor(playerIndex, world, stage.actor)) do
-         options[#options + 1] = {
-            kind = KIND_ACTION, actor = actorIndex, value = action,
-            hash = ActionIdentity(action),
-            preferred = (OpeningWorker(world, stage.actor) and OpeningHallAction(action) or
-               (stage.actor.role == 1 and stage.actor.idle and world.hasReadyDepot and
-                world.activeHarvesters < 2 and
-                (action.verb == "resource" or action.verb == "resource-location")) or
-               (world.hasHall and action.verb == "train" and stage.actor.idle and
-                stage.actor.depotReady and TypeMetadata(action.argument).canAttack)) and 1 or 0
-         }
+         if ActionAvailable(playerIndex, world, stage.actor, action, probe, batch, position) then
+            options[#options + 1] = {
+               kind = KIND_ACTION, actor = actorIndex, value = action,
+               hash = ActionIdentity(action),
+               preferred = (OpeningWorker(world, stage.actor) and OpeningHallAction(action) or
+                  (stage.actor.role == 1 and stage.actor.idle and world.hasReadyDepot and
+                   world.activeHarvesters < 2 and
+                   (action.verb == "resource" or action.verb == "resource-location")) or
+                  (world.hasHall and action.verb == "train" and stage.actor.idle and
+                   stage.actor.depotReady and TypeMetadata(action.argument).canAttack)) and 1 or 0
+            }
+         end
       end
    elseif stage.kind == "entity" then
       for _, entity in ipairs(world.entities) do
-         if world.bySlot[entity.slot] == entity and
-            (stage.action.verb ~= "resource" or
-             (stage.actor.role == 1 and HarvestableMine(entity))) and
-            (stage.action.verb ~= "return-goods" or
-             CompatibleDepot(stage.actor, entity, playerIndex)) then
+         if EntityTargetAllowed(playerIndex, world, stage.actor, stage.action, entity) and
+            CanOfferCommand(playerIndex, probe, batch, stage.action, entity.slot) then
             options[#options + 1] = {
                kind = KIND_ENTITY, actor = actorIndex, target = entity.entityIndex,
                hash = actionHash, value = entity
@@ -705,7 +801,9 @@ local function StageOptions(playerIndex, world, stage)
          for _, x in ipairs(sites.xs) do
             local legal, preferred = false, false
             for _, y in ipairs(sites.byX[x]) do
-               if BuildSiteLegal(playerIndex, stage, x, y) then
+               position[1], position[2] = x, y
+               if BuildSiteLegal(playerIndex, stage, x, y) and
+                  CanOfferCommand(playerIndex, probe, batch, stage.action, position) then
                   legal = true
                   if mines and LocalOpeningSite(mines, stage.actor, nearestMineDistance, x, y) then
                      preferred = true
@@ -725,7 +823,9 @@ local function StageOptions(playerIndex, world, stage)
             local sites, fresh = ForestSites(world, stage)
             for _, x in ipairs(sites.xs) do
                for _, y in ipairs(sites.byX[x]) do
-                  if fresh or GetTileTerrainHasFlag(x, y, "forest") then
+                  position[1], position[2] = x, y
+                  if (fresh or GetTileTerrainHasFlag(x, y, "forest")) and
+                     CanOfferCommand(playerIndex, probe, batch, stage.action, position) then
                      options[#options + 1] = {
                         kind = KIND_X, actor = actorIndex, hash = actionHash,
                         x = x, value = x
@@ -733,6 +833,24 @@ local function StageOptions(playerIndex, world, stage)
                      break
                   end
                end
+            end
+         end
+      elseif stage.action.verb == "cast-position" then
+         for x = 0, world.width - 1 do
+            position[1] = x
+            local legal = false
+            for y = 0, world.height - 1 do
+               position[2] = y
+               if CanOfferCommand(playerIndex, probe, batch, stage.action, position) then
+                  legal = true
+                  break
+               end
+            end
+            if legal then
+               options[#options + 1] = {
+                  kind = KIND_X, actor = actorIndex, hash = actionHash,
+                  x = x, value = x
+               }
             end
          end
       else
@@ -744,12 +862,15 @@ local function StageOptions(playerIndex, world, stage)
          end
       end
    elseif stage.kind == "y" then
+      position[1] = stage.x
       if stage.action.verb == "build-at" then
          local ys = BuildSites(playerIndex, world, stage).byX[stage.x] or {}
          local mines = stage.openingBuild and GoldMines(world) or nil
          local nearestMineDistance = mines and NearestGoldMineDistance(mines, stage.actor)
          for _, y in ipairs(ys) do
-            if BuildSiteLegal(playerIndex, stage, stage.x, y) then
+            position[2] = y
+            if BuildSiteLegal(playerIndex, stage, stage.x, y) and
+               CanOfferCommand(playerIndex, probe, batch, stage.action, position) then
                options[#options + 1] = {
                   kind = KIND_Y, actor = actorIndex, hash = actionHash,
                   x = stage.x, y = y, value = y,
@@ -762,7 +883,9 @@ local function StageOptions(playerIndex, world, stage)
       elseif stage.action.verb == "resource-location" then
          if stage.actor.role == 1 then
             for _, y in ipairs(ForestSites(world, stage).byX[stage.x] or {}) do
-               if GetTileTerrainHasFlag(stage.x, y, "forest") then
+               position[2] = y
+               if GetTileTerrainHasFlag(stage.x, y, "forest") and
+                  CanOfferCommand(playerIndex, probe, batch, stage.action, position) then
                   options[#options + 1] = {
                      kind = KIND_Y, actor = actorIndex, hash = actionHash,
                      x = stage.x, y = y, value = y
@@ -772,10 +895,13 @@ local function StageOptions(playerIndex, world, stage)
          end
       else
          for y = 0, world.height - 1 do
-            options[#options + 1] = {
-               kind = KIND_Y, actor = actorIndex, hash = actionHash,
-               x = stage.x, y = y, value = y
-            }
+            position[2] = y
+            if CanOfferCommand(playerIndex, probe, batch, stage.action, position) then
+               options[#options + 1] = {
+                  kind = KIND_Y, actor = actorIndex, hash = actionHash,
+                  x = stage.x, y = y, value = y
+               }
+            end
          end
       end
    end
@@ -891,6 +1017,19 @@ local function BuildObservation(playerIndex, world, stage, terminal)
       UInt32(components.enemyProgress), UInt32(components.ownLoss),
       UInt32(components.time), UInt32(components.terminal)
    }
+   if VERBOSE_LOGGING and stage ~= nil and stage.kind == "actor" then
+      War1gusAiLog("war1gus-ai.outcomes", {
+         {name = "player", value = tostring(playerIndex)},
+         {name = "observation_cycle", value = tostring(GameCycle)},
+         {name = "total_resources_gold", value = tostring(GetPlayerData(playerIndex, "TotalResources", "gold"))},
+         {name = "total_resources_wood", value = tostring(GetPlayerData(playerIndex, "TotalResources", "wood"))},
+         {name = "trained_units", value = tostring(GetPlayerData(playerIndex, "TrainedUnits"))},
+         {name = "completed_buildings", value = tostring(GetPlayerData(playerIndex, "CompletedBuildings"))},
+         {name = "total_kills", value = tostring(GetPlayerData(playerIndex, "TotalKills"))},
+         {name = "total_razings", value = tostring(GetPlayerData(playerIndex, "TotalRazings"))},
+         {name = "total_enemy_asset_damage", value = tostring(GetPlayerData(playerIndex, "TotalEnemyAssetDamage"))}
+      })
+   end
    for _, entity in ipairs(world.entities) do AppendWords(state, EntityWords(entity)) end
    for _, record in ipairs(records) do AppendWords(state, record) end
    return state, plans, components
@@ -956,23 +1095,6 @@ local function FinalizeEndedPlayers()
    end
 end
 
-local function CommandArgument(action, target)
-   if action.target == "entity" then
-      if action.verb == "cast-unit" then
-         return {spell = action.argument, target = target}
-      end
-      return target
-   end
-   if action.target == "position" then
-      if action.verb == "build-at" then
-         return {type = action.argument, x = target[1], y = target[2]}
-      elseif action.verb == "cast-position" then
-         return {spell = action.argument, x = target[1], y = target[2]}
-      end
-      return target
-   end
-   return action.argument
-end
 
 local function PublishSelection(playerIndex, sequence, stage, target, world)
    local actor = ActorStillPresent(world, stage.actor)
